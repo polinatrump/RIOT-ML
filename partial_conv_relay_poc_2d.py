@@ -18,55 +18,64 @@ from tvm.relay.op.strategy.generic import conv2d_strategy
 conv2d_strategy.register("generic", conv2d_strategy.__wrapped__) # use unoptimized conv2d to avoid kernel_vec copy
 
 if __name__=="__main__":
-    data = relay.var("data", shape=(1, 1, 128, 128))
+    data = relay.var("data", shape=(1, 1, 25, 25))
     # data = relay.var("data", shape=(1, 3, 15, 15))
 ###################### Big ##############################333
-#    weight1 = relay.var("weight1", shape=(64, 1, 7, 7))
-#    weight2 = relay.var("weight2", shape=(64, 64, 3, 3))
-#    weight3 = relay.var("weight3", shape=(64, 64, 3, 3))
-#    dense_weight = relay.var("dense_weight", shape=(10, 64))
-#
-#    params = {"weight1": tvm.nd.array(np.random.rand(64, 1, 7, 7).astype(np.float32)),
-#              "weight2": tvm.nd.array(np.random.rand(64, 64, 3, 3).astype(np.float32)),
-#              "weight3": tvm.nd.array(np.random.rand(64, 64, 3, 3).astype(np.float32)),
-#              "dense_weight": tvm.nd.array(np.random.rand(10, 64).astype(np.float32)),
-#              }
-#
-#    conv1 = relay.nn.conv2d(data, weight1, kernel_size=(7, 7))
-#    conv2 = relay.nn.conv2d(conv1, weight2, kernel_size=(3, 3))
-#    conv3 = relay.nn.conv2d(conv2, weight3, kernel_size=(3, 3))
-#    avg_pool = relay.nn.avg_pool2d(conv3, pool_size=(14, 14))
-#    reshape = relay.reshape(avg_pool, (1,64,))
-################################################################3
+    weight1 = relay.var("weight1", shape=(64, 1, 7, 7))
+    weight2 = relay.var("weight2", shape=(64, 64, 3, 3))
+    weight3 = relay.var("weight3", shape=(64, 64, 3, 3))
+    dense_weight = relay.var("dense_weight", shape=(10, 64))
 
-###################### Small ##############################333
-    weight1 = relay.var("weight1", shape=(6, 1, 7, 7))
-    weight2 = relay.var("weight2", shape=(16, 6, 3, 3))
-    weight3 = relay.var("weight3", shape=(6, 16, 3, 3))
-    dense_weight = relay.var("dense_weight", shape=(10, 6))
-
-    params = {"weight1": tvm.nd.array(np.random.rand(6, 1, 7, 7).astype(np.float32)),
-              "weight2": tvm.nd.array(np.random.rand(16, 6, 3, 3).astype(np.float32)),
-              "weight3": tvm.nd.array(np.random.rand(6, 16, 3, 3).astype(np.float32)),
-              "dense_weight": tvm.nd.array(np.random.rand(10, 6).astype(np.float32)),
-              }
+    params = {"weight1": tvm.nd.array(np.random.rand(64, 1, 7, 7).astype(np.float32)),
+                "weight2": tvm.nd.array(np.random.rand(64, 64, 3, 3).astype(np.float32)),
+                "weight3": tvm.nd.array(np.random.rand(64, 64, 3, 3).astype(np.float32)),
+                "dense_weight": tvm.nd.array(np.random.rand(10, 64).astype(np.float32)),
+                }
 
     conv1 = relay.nn.conv2d(data, weight1, kernel_size=(7, 7))
     conv2 = relay.nn.conv2d(conv1, weight2, kernel_size=(3, 3))
     conv3 = relay.nn.conv2d(conv2, weight3, kernel_size=(3, 3))
-    avg_pool = relay.nn.avg_pool2d(conv3, pool_size=(118, 118))
-    reshape = relay.reshape(avg_pool, (1,6,))
-################################################################3
-
-
+    avg_pool = relay.nn.avg_pool2d(conv3, pool_size=(15, 15))
+    reshape = relay.reshape(avg_pool, (1,64,))
     dense = relay.nn.dense(reshape, dense_weight)
 
-    func = relay.Function([data, weight1, weight2, weight3 ,dense_weight], dense)
+    func = relay.Function([data, weight1, weight2, weight3, dense_weight], dense)
+################################################################3
+
+###################### Small ##############################333
+    # weight1 = relay.var("weight1", shape=(6, 1, 5, 5))
+    # weight2 = relay.var("weight2", shape=(16, 6, 5, 5))
+    # weight3 = relay.var("weight3", shape=(6, 16, 3, 3))
+    # dense_weight = relay.var("dense_weight", shape=(10, 16))
+
+    # params = {"weight1": tvm.nd.array(np.random.rand(6, 1, 5, 5).astype(np.float32)),
+    #           "weight2": tvm.nd.array(np.random.rand(16, 6, 5, 5).astype(np.float32)),
+    #         #   "weight3": tvm.nd.array(np.random.rand(6, 16, 3, 3).astype(np.float32)),
+    #           "dense_weight": tvm.nd.array(np.random.rand(10, 6).astype(np.float32)),
+    #           }
+
+    # conv1 = relay.nn.conv2d(data, weight1, kernel_size=(5, 5))
+    # conv1 = relay.nn.relu(conv1)
+    # max_pool1 = relay.nn.max_pool2d(conv1, pool_size=(2, 2), strides=(2, 2))
+
+    # conv2 = relay.nn.conv2d(max_pool1, weight2, kernel_size=(5, 5))
+    # conv2 = relay.nn.relu(conv2)
+    # max_pool1 = relay.nn.max_pool2d(conv2, pool_size=(2, 2), strides=(2, 2))
+
+    # # conv3 = relay.nn.conv2d(conv2, weight3, kernel_size=(3, 3))
+    # avg_pool = relay.nn.avg_pool2d(max_pool1, pool_size=(12, 12))
+    # reshape = relay.reshape(avg_pool, (1,16,))
+    # dense = relay.nn.dense(reshape, dense_weight)
+
+    # func = relay.Function([data, weight1, weight2, dense_weight], dense)
+################################################################3
+
+    # func = relay.Function([data, weight1, weight2, dense_weight], dense)
     mod = tvm.IRModule.from_expr(func)
     mod = relay.transform.InferType()(mod)
     print(mod)
     # Apply the transformation
-    # mod = rewrite_conv_chain_to_function(mod)
+    mod = rewrite_conv_chain_to_function(mod)
     
     # Print the rewritten module
     print(mod)
@@ -83,7 +92,9 @@ if __name__=="__main__":
     )
     # TARGET = tvm.target.target.micro('host')
     # TARGET = tvm.target.target.micro('nrf52840')
-    TARGET = "c -keys=generic,cpu -model=host"
+    TARGET = "c -keys=generic,arm_cpu,cpu -mcpu=cortex-m4+nodsp -model=nrf52840"
+    # """c -keys=arm_cpu,cpu -mcpu=cortex-m4+nodsp -model=nrf52840"""
+    
 
 
 

@@ -53,6 +53,16 @@ class ReWriteInputsShape(relay.ExprMutator):
         else:
             print("Do nothing for other cases")
             return var
+
+class InferCallNodeType(relay.ExprMutator):
+    def __init__(self):
+        super().__init__()
+
+    def visit_call(self, call):
+        for arg in call.args:
+            self.visit(arg)
+        relay.transform.InferTypeLocal(call)
+        return call
         
 class ReWriteSwapVars(relay.ExprMutator):
     """This pass partitions the subgraph based on the if conditin
@@ -120,7 +130,178 @@ class DynSlice:
     def __call__(self, sliced_data, slice_begin, slice_end):
         return DynamicStridedSlice(sliced_data, slice_begin, self.slice_end, self.strided,'size')
 
+def calculate_new_input_shape_and_strides(op_info, expected_output_shape):
+    new_input_shape = [*expected_output_shape]
+    new_input_stride = [*expected_output_shape]
+    # breakpoint()
+    for i in op_info:
+        s = [1, 1]
+        d = [1, 1]
+        p = [0, 0]
+        k = [1, 1]
+
+        if i['op_name'] == 'nn.dense':
+            continue
+        elif i['op_name'] == 'reshape':
+            continue
+        elif i['op_name'] == 'nn.avg_pool2d':
+            input_hw = [i['input_shape'][-2], i['input_shape'][-1]]
+            is_iterative_pool = input_hw == i['kernel_size']
+            if is_iterative_pool:
+                avg_dividend = input_hw[0] + input_hw[1]
+                continue
+        k = i['kernel_size']
+        s = i['strides']
+        # TODO deal with (zero)-padding
+        # p = i['padding'][-2:]
+        # breakpoint()
+        
+        new_input_shape[0] = (new_input_shape[0] - 1) * s[0] - 2 * p[0] + d[0] * (k[0]-1) + 1
+        new_input_shape[1] = (new_input_shape[1] - 1) * s[1] - 2 * p[1] + d[1] * (k[1]-1) + 1
+        new_input_stride[0] = new_input_stride[0] * s[0]
+        new_input_stride[1] = new_input_stride[1] * s[1]
+    return new_input_shape, new_input_stride
+
+def analysis_overlap_rate(data_shape,
+                          ori_kernel_shape, ori_strides,
+                          new_kernel_shape, new_strides):
+    ori = int( (data_shape[0] - ori_kernel_shape[0]) / ori_strides[0] + 1) # ori h
+    ori += int( (data_shape[1] - ori_kernel_shape[1]) / ori_strides[1] + 1) # ori h + w
+
+    cur = int( (data_shape[0] - new_kernel_shape[0]) / new_strides[0] + 1) * int( (new_kernel_shape[0] - ori_kernel_shape[0]) / ori_strides[0] + 1) 
+    cur += int( (data_shape[1] - new_kernel_shape[1]) / new_strides[1] + 1) * int( (new_kernel_shape[1] - ori_kernel_shape[1]) / ori_strides[1] + 1) 
+
+    return float(cur) / float(ori)
+
 class ConvChainPattern(dfp.DFPatternCallback):
+    def __init__(self):
+        super().__init__(require_type=True)
+        
+        # Define the patterns for conv2d, avg_pool2d, and dense
+        self.pool = dfp.is_op("nn.max_pool2d")(dfp.wildcard())
+        self.conv2d = dfp.is_op("nn.conv2d")(dfp.wildcard(), dfp.wildcard())
+        self.avg_pool2d = dfp.is_op("nn.avg_pool2d")(self.conv2d | self.pool)
+        self.reshape = dfp.is_op("reshape")(self.avg_pool2d | self.conv2d)
+        self.dense = dfp.is_op("nn.dense")(self.avg_pool2d | self.conv2d | self.reshape, dfp.wildcard())
+
+        # Define the overall pattern: multiple conv2d -> avg_pool2d -> dense
+        self.pattern = self.dense
+
+        # To record input/output shapes and other attributes
+        self.op_info = []
+
+        self.external_funcs = None
+
+    def callback(self, pre, post, node_map):
+        # Step 2: Record Input/Output Shapes and Attributes
+        
+        # conv_nodes = node_map[self.conv2d]
+        avg_pool_node = node_map[self.avg_pool2d][0]
+        dense_node = node_map[self.dense][0]
+        reshape_node = node_map[self.reshape][0]
+        
+        op_shape_collector = CollectOpShapeInfo()
+        op_shape_collector.visit(dense_node)
+        self.op_info = op_shape_collector.op_info
+
+        is_reshape_before_dense = reshape_node is not None
+        is_pool_node_before_dense = avg_pool_node is not None
+        
+        overlap_rate = 10
+        overlap_settings = []
+        i = 1
+        while (overlap_rate > 1):
+            new_input_layout, new_input_stride = calculate_new_input_shape_and_strides(self.op_info, [i, i])
+
+
+            data_shape = self.op_info[-1]["input_shape"]
+            ori_kernel_shape = self.op_info[-1]["kernel_size"]
+            ori_strides = self.op_info[-1]["strides"]
+            overlap_rate = analysis_overlap_rate(data_shape[-2:], 
+                                                ori_kernel_shape, ori_strides,
+                                                new_input_layout, new_input_stride)
+            overlap_settings.append({"overlap_rate": overlap_rate, "ishape": new_input_layout, "istrides": new_input_stride})
+            i += 1
+        
+        print(f'overlap_settings: {overlap_settings}')
+        breakpoint()
+        new_output_hw = [1, 1]
+        new_input_layout, new_input_stride = calculate_new_input_shape_and_strides(self.op_info, new_output_hw)
+
+        for i in self.op_info:
+            if i['op_name'] == 'nn.avg_pool2d':
+                input_hw = [i['input_shape'][-2], i['input_shape'][-1]]
+                is_iterative_pool = input_hw == i['kernel_size']
+                if is_iterative_pool:
+                    avg_dividend = input_hw[0] + input_hw[1]
+                    continue
+
+        # Collect info for dense node (only shapes, no kernel/padding/stride)
+        # collect_op_info(dense_node, 'dense')
+
+        # Step 3: Wrap Conv Chain in an External Function
+        # Extract the part of the graph to be wrapped in an external function
+        conv_chain_node = avg_pool_node.args[0]
+        conv_chain_node_cp = copy.deepcopy(conv_chain_node)
+
+        conv_chain_params = relay.analysis.free_vars(conv_chain_node)
+        conv_chain_params_cp =  relay.analysis.free_vars(conv_chain_node_cp)
+        input_var = conv_chain_params_cp[0]
+        input_shape = input_var.checked_type.shape
+        in_w = int(input_shape[-2])
+        in_h = int(input_shape[-1])
+
+        output_shape = conv_chain_node.checked_type.shape
+        new_output_shape = (output_shape[0],output_shape[1], *new_output_hw)
+
+        re_write_inputs = ReWriteInputsShape({'data': (input_shape[0],input_shape[1],new_input_layout[0],new_input_layout[1])})
+        
+        conv_chain_block = re_write_inputs.visit(conv_chain_node_cp)
+        conv_chain_block_params = relay.analysis.free_vars(conv_chain_block)
+     
+        from .iterative_ops import iterative_global_avg_pool_step, IterativeGlobalAvgPool
+        from .relay_op import iter_avg_pool
+
+        slice_begin_var = relay.var("slice_begin", shape=(4,), dtype="int32")
+
+        initial_output_var = relay.var("initial_output", shape=new_output_shape, dtype="float32")
+
+        new_input_var = dyn_slice_fixed_size(input_var, slice_begin_var, [int(input_shape[0]),int(input_shape[1]),*new_input_layout])
+
+        rewrite_swap_vars = ReWriteSwapVars({"data":new_input_var})
+        conv_chain_block = rewrite_swap_vars.visit(conv_chain_block)
+
+        iterative_output = iterative_global_avg_pool_step(conv_chain_block, initial_output_var, avg_dividend)
+
+        params = [slice_begin_var, initial_output_var, *conv_chain_params_cp]
+
+        iteratee_func = relay.Function(params, iterative_output).with_attr("Primitive", tvm.tir.IntImm("int32", 1)) \
+                                    .with_attr("global_symbol", "iteratee") # keep that for stable func name
+
+        slice_begin = relay.zeros(shape=(4,), dtype="int32")
+        initial_output = relay.zeros(shape=new_output_shape, dtype="float32")
+        initial_var = relay.Call(iteratee_func, [slice_begin, initial_output, *conv_chain_params])
+
+        iter_begin = [0,0, *new_input_stride]
+        iter_end = [0, 0, in_w - new_input_layout[0] + 1, in_h - new_input_layout[1] + 1]
+        iter_strides = [1,1, *new_input_stride]
+        iterative_output = iter_func(iter_begin, iter_end, iter_strides,[slice_begin, initial_var,*conv_chain_params], iteratee_func)
+
+        iterative_output = tvm.relay.sum(iterative_output, axis=[2,3], keepdims=True)
+                
+        if is_reshape_before_dense:
+            output = relay.reshape(iterative_output, reshape_node.attrs.newshape)
+
+        dense_weight = dense_node.args[1]
+        output = relay.nn.dense(output, dense_weight)
+        print(output.astext())
+
+
+        return output
+
+# class ReWriteInsertIntermediateOutputs()
+
+class ConvChainPatternCacheIntermediate(dfp.DFPatternCallback):
     def __init__(self):
         super().__init__(require_type=True)
         
@@ -204,6 +385,9 @@ class ConvChainPattern(dfp.DFPatternCallback):
         
         conv_chain_block = re_write_inputs.visit(conv_chain_node_cp)
         conv_chain_block_params = relay.analysis.free_vars(conv_chain_block)
+        conv_chain_block = InferCallNodeType().visit(conv_chain_block)
+        print(conv_chain_block)
+        breakpoint()
      
         from .iterative_ops import iterative_global_avg_pool_step, IterativeGlobalAvgPool
         from .relay_op import iter_avg_pool
@@ -216,6 +400,8 @@ class ConvChainPattern(dfp.DFPatternCallback):
 
         rewrite_swap_vars = ReWriteSwapVars({"data":new_input_var})
         conv_chain_block = rewrite_swap_vars.visit(conv_chain_block)
+        # conv_chain_block = relay.transform.InferType()(conv_chain_block)
+        
 
         iterative_output = iterative_global_avg_pool_step(conv_chain_block, initial_output_var, avg_dividend)
 
@@ -243,10 +429,12 @@ class ConvChainPattern(dfp.DFPatternCallback):
 
         return output
 
+
 # Step 5: Rewrite the Graph and Define the External Function
 def rewrite_conv_chain_to_function(mod):
     # Apply the pattern
     pattern = ConvChainPattern()
+    # pattern = ConvChainPatternCacheIntermediate()
     
     # Run the pattern matcher and rewriter
     func = dfp.rewrite(pattern, mod["main"])
@@ -319,8 +507,8 @@ if __name__ == "__main__":
         "link-params": True,
         },
     )
-    # TARGET = tvm.target.target.micro('host')
-    TARGET = tvm.target.target.micro('nrf52840')
+    TARGET = tvm.target.target.micro('host')
+    # TARGET = tvm.target.target.micro('nrf52840')
 
     from tvm.ir.instrument import PrintAfterAll, PrintBeforeAll
 
