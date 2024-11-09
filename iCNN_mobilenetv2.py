@@ -373,11 +373,18 @@ def create_mbv2_fake_int8(input_size=(1, 3, 224, 224)):
     mod = relay.transform.InferType()(mod)
     return mod
 
+from partial_conv.fusion_network_rewrite import MultiFusionNetworkRewriter
+from tvm.relay import dataflow_pattern as dfp
+
 if __name__=="__main__":
     
     mod = create_mbv2_fake_int8()
 
-    print(mod)
+    fusion_rewriter = MultiFusionNetworkRewriter()
+
+    func = dfp.rewrite(fusion_rewriter, mod["main"])
+
+    print(fusion_rewriter.op_info)
 
     RUNTIME = tvm.relay.backend.Runtime("crt", {'system-lib':False}) # should not use 'system-lib:true' while AoT
     EXECUTOR = tvm.relay.backend.Executor(

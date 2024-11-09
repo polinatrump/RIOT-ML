@@ -939,8 +939,6 @@ def conv(
             simplified_channel_index = rc
         else:
             simplified_channel_index = ff // (num_filter // groups) * (in_channel // groups) + rc
-
-        breakpoint()
         return te.sum(
             temp.__getitem__(
                 tuple(

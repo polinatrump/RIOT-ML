@@ -133,7 +133,6 @@ class DynSlice:
 def calculate_new_input_shape_and_strides(op_info, expected_output_shape):
     new_input_shape = [*expected_output_shape]
     new_input_stride = [*expected_output_shape]
-    # breakpoint()
     for i in op_info:
         s = [1, 1]
         d = [1, 1]
@@ -195,7 +194,8 @@ class ConvChainPattern(dfp.DFPatternCallback):
     def callback(self, pre, post, node_map):
         # Step 2: Record Input/Output Shapes and Attributes
         
-        # conv_nodes = node_map[self.conv2d]
+        conv_nodes = node_map[self.conv2d]
+        breakpoint()
         avg_pool_node = node_map[self.avg_pool2d][0]
         dense_node = node_map[self.dense][0]
         reshape_node = node_map[self.reshape][0]

@@ -34,6 +34,7 @@ class Layer:
         self.tile_buffer_size = None
 
         self._common_memory_usage = None
+        self._memory_usage = None
 
 
     def forward_common(self, input_tensor):
@@ -43,6 +44,7 @@ class Layer:
         self.input_tensor_shape = input_tensor.shape
         self.output_tensor_compute_freq = np.ones((output_height, output_width, self.output_channels))
         self._common_memory_usage = self.output_tensor_compute_freq.size + input_tensor.size
+        self._memory_usage = self._common_memory_usage
         return FakeTensor(self.output_tensor_shape)
 
     
@@ -66,7 +68,7 @@ class Layer:
     
     @property
     def memory_usage(self):
-        return self._common_memory_usage
+        return self._memory_usage
 
     @property
     def common_memory_usage(self):
@@ -85,6 +87,10 @@ class Layer:
         return self.output_tensor_shape
     
     @property
+    def common_input_shape(self):
+        return self.input_tensor_shape
+    
+    @property
     def buffer_memory_usage(self):
         return self.tile_buffer_size
 
@@ -98,7 +104,7 @@ class ConvLayer(Layer):
         super().__init__("ConvLayer", output_channels, kernel_size, stride, padding)
 
     def forward_common(self, input_tensor):
-        self.MAC_per_element = input_tensor.shape[2] * self.output_channels * (self.kernel_size**2)
+        self.MAC_per_element = input_tensor.shape[2] * (self.kernel_size**2)
         return super().forward_common(input_tensor)
     
     def forward(self, input_tensor,i_h=None, i_w=None, acc_pad=None):
@@ -118,11 +124,11 @@ class ConvLayer(Layer):
 
         output_tensor = FakeTensor((output_height, output_width, self.output_channels))
 
-        # self.memory_usage = output_tensor.size + input_tensor.size
+        self._memory_usage = output_tensor.size + input_tensor.size
         
         self.tile_buffer_size = output_tensor.size
 
-        self.MAC_per_element = input_tensor.shape[2] * self.output_channels * (self.kernel_size**2)
+        self.MAC_per_element = input_tensor.shape[2] * (self.kernel_size**2)
 
         self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
         
@@ -133,9 +139,10 @@ class DepthwiseConv(Layer):
         super().__init__("DepthwiseConv", output_channels, kernel_size, stride, padding)
 
     def forward_common(self, input_tensor):
-        self.MAC_per_element = self.output_channels * (self.kernel_size**2)
+        self.MAC_per_element = (self.kernel_size**2)
         o_tensor = super().forward_common(input_tensor)
         self._common_memory_usage = input_tensor.size
+        self._memory_usage = input_tensor.size
         return o_tensor
     
     def forward(self, input_tensor,i_h=None, i_w=None, acc_pad=None):
@@ -153,10 +160,10 @@ class DepthwiseConv(Layer):
 
         output_tensor = FakeTensor((output_height, output_width, self.output_channels))
 
-        # self.memory_usage = output_tensor.size
+        self._memory_usage = input_tensor.size
 
         self.tile_buffer_size = output_tensor.size
-        self.MAC_per_element = self.output_channels * (self.kernel_size**2)
+        self.MAC_per_element = (self.kernel_size**2)
 
         self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
         
@@ -169,7 +176,7 @@ class PoolingLayer(Layer):
 
     def forward_common(self, input_tensor):
         self.output_channels = input_tensor.shape[2]
-        self.MAC_per_element = input_tensor.shape[2]
+        self.MAC_per_element = (self.kernel_size**2)
         return super().forward_common(input_tensor)
     
 
@@ -188,20 +195,22 @@ class PoolingLayer(Layer):
 
         self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
 
-        # self.memory_usage = output_tensor.size + input_tensor.size
+        self._memory_usage = output_tensor.size + input_tensor.size
         self.tile_buffer_size = output_tensor.size
 
-        self.MAC_per_element = input_tensor.shape[2] 
+        self.MAC_per_element = (self.kernel_size**2)
 
         return output_tensor
 
 # Define a fused block that can contain arbitrary layers
 class FusedBlock:
-    def __init__(self, layers, input_tensor, block_output_size=1):
+    def __init__(self, layers, input_tensor, block_output_size=1, cache=False):
         self.layers = layers
         self.tile_size = None
         self.stride = None
         self.set_block_output_size(block_output_size)
+        self.cache = cache
+        self.forward = self.forward_no_cache
         print("fusion tile size:", self.tile_size)
         print("fusion stride:", self.stride)
         # i = 1
@@ -219,12 +228,23 @@ class FusedBlock:
     @property
     def memory_usage(self):
         buffer_sum = reduce(lambda x,y: x+y, [l.buffer_memory_usage for l in self.layers])
-        print("buffer usage:", buffer_sum)
-        return buffer_sum + self.layers[0].common_input_size + self.layers[-1].common_output_size
+        # TODO: mem usage with cache is not correct for some case?
+        if self.cache:
+            print("cache buffer usage:", buffer_sum)
+            return buffer_sum + self.layers[0].common_input_size + self.layers[-1].common_output_size
+
+        else:
+            layer_mem_max =max([l.memory_usage for l in self.layers])
+            print("layer peak usage:", layer_mem_max, [l.memory_usage for l in self.layers])
+            return layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size
     
     @property
     def aggregated_output_shape(self):
         return self.layers[-1].common_output_shape
+    
+    @property
+    def aggregated_output_size(self):
+        return self.layers[-1].common_output_size
 
     
     def forward_common(self, input_tensor):
@@ -233,7 +253,7 @@ class FusedBlock:
             out_tensor = layer.forward_common(out_tensor)
         return out_tensor
 
-    def forward(self, input_tensor, tile_size=None, stride=None):
+    def forward_no_cache(self, input_tensor, tile_size=None, stride=None):
         # Process each tile in the input tensor through the layers in the fused block
         if tile_size is None:
             tile_size = self.tile_size
@@ -253,6 +273,9 @@ class FusedBlock:
                     tile = layer.forward(tile, i // s, j // s, p)
                     
         return tile
+    
+    def set_forward_cache_horizon(self):
+        self.forward = self.forward_cache_horizon
 
     def forward_cache_horizon(self, input_tensor, tile_size=None, stride=None):
         # Process each tile in the input tensor through the layers in the fused block
@@ -362,12 +385,12 @@ def visualize_recomp_freq(layers):
     plt.show()
 
 # Example: Define user-configurable layers
-# layers = [
-#     ConvLayer(output_channels=64, kernel_size=3, stride=1),
-#     PoolingLayer(pool_size=2, stride=2),
-#     ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
-#     ConvLayer(output_channels=64, kernel_size=3, stride=1)
-# ]
+poc_layers = [
+    ConvLayer(output_channels=64, kernel_size=3, stride=1),
+    PoolingLayer(pool_size=2, stride=2),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1)
+]
 
 
 def MBConv(intput_channel, output_channel, expansion=1, stride=1, padding=1, kernel_size=3):
@@ -385,7 +408,6 @@ mobilenetv2_layers = [
     *MBConv(24, 24, 6, 1),
 
     *MBConv(24, 32, 6, 2),
-
     *MBConv(32, 32, 6, 1),
     *MBConv(32, 32, 6, 1),
 
@@ -407,12 +429,88 @@ mobilenetv2_layers = [
     # PoolingLayer(pool_size=7, stride=1),
 ]
 
+resnet34_layers = [
+    ConvLayer(output_channels=64, kernel_size=7, stride=2, padding=3),
+    
+    #conv2_x
+    PoolingLayer(pool_size=3, stride=2, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=64, kernel_size=3, stride=1, padding=1),
+
+    #conv3_x
+    ConvLayer(output_channels=128, kernel_size=3, stride=2, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=128, kernel_size=3, stride=1, padding=1),
+
+    #conv4_x
+    ConvLayer(output_channels=256, kernel_size=3, stride=2, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=256, kernel_size=3, stride=1, padding=1),
+
+
+    #conv5_x
+    ConvLayer(output_channels=512, kernel_size=3, stride=2, padding=1),
+    ConvLayer(output_channels=512, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=512, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=512, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=512, kernel_size=3, stride=1, padding=1),
+    ConvLayer(output_channels=512, kernel_size=3, stride=1, padding=1),
+
+
+]
+
+mcunetv2_vww_5fps = [
+    ConvLayer(output_channels=16, kernel_size=3, stride=2, padding=1),
+    DepthwiseConv(16,3,1,1),
+    ConvLayer(output_channels=8, kernel_size=1, stride=1, padding=0),
+
+    *MBConv(8, 16, 6, 2),
+    *MBConv(16, 16, 3, 1),
+    *MBConv(16, 16, 3, 1),
+    
+    *MBConv(16, 24, 3, 2, 3, 7),
+
+    *MBConv(24, 24, 6, 1),
+    *MBConv(24, 24, 5, 1, 2, 5),
+    *MBConv(24, 40, 6, 2, 3, 7),
+
+    *MBConv(40, 40, 6, 1, 3, 7),
+
+    *MBConv(40, 48, 6, 1, 1, 3),
+    *MBConv(48, 48, 4, 1, 1, 3),
+    *MBConv(48, 96, 5, 2, 2, 5),
+
+    *MBConv(96, 96, 5, 1, 1, 3),
+    *MBConv(96, 96, 4, 1, 1, 3),
+    *MBConv(96, 160, 3, 1, 3, 7),
+]
+
 layers = mobilenetv2_layers
 
-split_idx = 10
+split_idx_1 = 13
+split_idx_2 = 16
 
-block1 = layers[0:split_idx]
-block2 = layers[split_idx:]
+block1 = layers[0:split_idx_1]
+block2 = layers[split_idx_1:split_idx_2]
+block_remain = layers[split_idx_2:]
 # Example input tensor (adjust dimensions based on tile size)
 input_tensor = np.zeros((224, 224, 3))  # (height, width, channels)
 
@@ -446,17 +544,29 @@ class Network:
         for l in self.layers:
             output_tensor = l.forward(output_tensor)
             if isinstance(l, FusedBlock):
-                output_tensor = FakeTensor(l.aggregated_output_shape)
+                output_tensor = np.zeros(l.aggregated_output_shape)
+            else:
+                output_tensor = np.zeros(output_tensor.shape)
         return output_tensor
     
-    def calc_memory_usage(self, input_tensor, ignore_input=True):
+    def calc_memory_usage(self, input_tensor, ignore_input=True, ignore_output=False):
         self.forward(input_tensor)
         memory_usage = 0
         for i,l in enumerate(self.layers):
-            memory_usage = max(memory_usage, l.memory_usage)
-            print(f"layer {i} mem usage: {l.memory_usage}")
+            current_mem_usage = l.memory_usage
             if i == 0 and ignore_input:
-                memory_usage -= input_tensor.size
+                current_mem_usage -= input_tensor.size
+            elif i == len(self.layers) - 1 and ignore_output:
+                current_mem_usage -= l.aggregated_output_size
+            memory_usage = max(memory_usage, current_mem_usage)          
+            
+            if isinstance(l, Layer):
+                print(f"layer {i} mem usage: {current_mem_usage} \t",
+                      f"input shape: {l.common_input_shape} \t size: {l.common_input_size} \t",
+                      f"output shape: {l.common_output_shape} \t size: {l.common_output_size}")
+            else:
+                print(f"layer {i} mem usage: {current_mem_usage} \t",
+                      f"output shape: {l.aggregated_output_shape} \t size: {l.aggregated_output_size}")
         return memory_usage
 
 # Must run first to get original i/o shape
@@ -464,14 +574,51 @@ origin_network = Network(layers)
 ori_network_mem = origin_network.calc_memory_usage(input_tensor)
 print("Original Network memory usage:", ori_network_mem)
 
-fused_block1 = FusedBlock(block1, input_tensor)
+# fused_block1 = FusedBlock(block1, input_tensor, 1)
+# fused_block2 = FusedBlock(block2, fused_block1.aggregated_output_shape, 1)
 
-fusion_network = Network([fused_block1, *block2])
-fusion_network_mem = fusion_network.calc_memory_usage(input_tensor)
+# fusion_network = Network([fused_block1, fused_block2, *block_remain])
+# fusion_network_mem = fusion_network.calc_memory_usage(input_tensor)
+# print("Fusion Network memory usage:", fusion_network_mem)
+
+def find_minimal_mem_usage_fusion_depth(layers, input_tensor):
+    depth = None
+    mem_usage_lst = []
+    for i,l in enumerate(layers):
+        temp_fusion = FusedBlock(layers[0:i+1], input_tensor)
+        if temp_fusion.tile_size >= input_tensor.shape[0] or temp_fusion.tile_size >= input_tensor.shape[1]:
+            break
+        temp_fusion.forward(input_tensor)
+        mem_usage_lst.append(temp_fusion.memory_usage)
+    if len(mem_usage_lst) != 0:
+        depth = np.argmin(mem_usage_lst) + 1       
+    return depth
+
+idx = 0
+blocks = []
+block_input_tensor = input_tensor
+
+while idx < len(layers):
+    temp_layers = layers[idx:]
+    end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
+    if end_idx is not None:
+        fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
+        blocks.append(fusion_block)
+        block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
+    else:
+        end_idx = 1
+        blocks = [*blocks, *layers[idx:idx+end_idx]]
+        block_input_tensor = np.zeros(blocks[-1].common_output_shape)
+    idx += end_idx
+
+origin_network = Network(layers)
+ori_network_mem = origin_network.calc_memory_usage(input_tensor)
+print("Original Network memory usage:", ori_network_mem)
+
+fusion_network = Network(blocks)
+_ = [l.set_forward_cache_horizon() for l in blocks]
+fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
 print("Fusion Network memory usage:", fusion_network_mem)
-
-
-
 
 
 # dummy_block = FusedBlock(layers, input_tensor)
