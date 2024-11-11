@@ -100,14 +100,23 @@ def copy_in_place_spatial_compute(attrs, inputs, output_type):
                         dst[n + indices[0], i + indices[1], j + indices[2], k+ indices[3]] = src[n + indices[0], i + indices[1], j + indices[2], k+ indices[3]]
 
         return ib.get()
-    out_buf = tvm.tir.decl_buffer(dst.shape, dst.dtype, dst.op.name, elem_offset=tvm.tir.Var("elem_offset", "int32"))
-    
-    return [tvm.te.extern((1,), [dst, src, indices],
-               lambda ins, outs: gen_ib(ins[0], ins[1], ins[2]),
+    input_placeholders = []
+    for t in inputs:
+        input_placeholders.append(
+            tvm.tir.decl_buffer(
+                t.shape, t.dtype, t.op.name, elem_offset=tvm.tir.Var("elem_offset", "int32")
+            )
+        )
+    out_ib = [tvm.te.extern(output_type.shape, [src, indices],
+#                lambda ins, outs: gen_ib(ins[0], ins[1], ins[2]),
+              lambda ins, outs: gen_ib(outs[0], ins[0], ins[1]),
             name="copy_in_place_spatial_compute.generic", 
-            # out_buffers=[out_buf],
+            in_buffers=input_placeholders[1:],
+            out_buffers=[input_placeholders[0]],
             dtype=output_type.dtype,
+            tag='inplace'
             )]
+    return out_ib
 
 @override_native_generic_func("copy_in_place_spatial_strategy")
 def copy_in_place_spatial_strategy(attrs, inputs, out_type, target):
@@ -124,8 +133,8 @@ if __name__ == "__main__":
     dst = relay.var("A", shape=(1,4, 12, 12))
     src = relay.var("B", shape=(1, 4, 2, 2))
     bg_indices = relay.var("ind", shape=(4,) , dtype="int32")
-    body = copy_in_place_spatial(dst, src, bg_indices) 
-    body = relay.Tuple([body + relay.const(2.0), dst])
+    body = copy_in_place_spatial(dst, src, bg_indices) + relay.const(2.0)
+#     body = relay.Tuple([body + relay.const(2.0), dst])
     func = relay.Function([dst, src, bg_indices], body)
 
     mod = tvm.IRModule.from_expr(func)
@@ -153,7 +162,7 @@ if __name__ == "__main__":
                                                     "tir.usmp.algorithm": "hill_climb",
                                                     "relay.backend.use_auto_scheduler": True,
                                                     },
-                                                    # instruments=[PrintBeforeAll(),PrintAfterAll()]
+#                                                     instruments=[PrintBeforeAll(),PrintAfterAll()]
                                                     ): 
         # print(params.keys())
         # opt_module, _ = relay.optimize(mod, target=TARGET)
