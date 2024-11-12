@@ -135,14 +135,16 @@ class ConvLayer(Layer):
         return output_tensor
     
 class DepthwiseConv(Layer):
-    def __init__(self, output_channels, kernel_size, stride, padding=0):
+    def __init__(self, output_channels, kernel_size, stride, padding=0, inplace=False):
         super().__init__("DepthwiseConv", output_channels, kernel_size, stride, padding)
+        self.inplace = inplace
 
     def forward_common(self, input_tensor):
         self.MAC_per_element = (self.kernel_size**2)
         o_tensor = super().forward_common(input_tensor)
-        self._common_memory_usage = input_tensor.size
-        self._memory_usage = input_tensor.size
+        if self.inplace:
+            self._common_memory_usage = input_tensor.size
+            self._memory_usage = input_tensor.size
         return o_tensor
     
     def forward(self, input_tensor,i_h=None, i_w=None, acc_pad=None):
@@ -160,7 +162,10 @@ class DepthwiseConv(Layer):
 
         output_tensor = FakeTensor((output_height, output_width, self.output_channels))
 
-        self._memory_usage = input_tensor.size
+        if self.inplace:
+            self._memory_usage = input_tensor.size
+        else:
+            self._memory_usage = output_tensor.size + input_tensor.size
 
         self.tile_buffer_size = output_tensor.size
         self.MAC_per_element = (self.kernel_size**2)
@@ -297,6 +302,7 @@ class FusedBlock:
                 tile = layer.forward(tile, i // s, 0, p)
                     
         return tile
+
 
     def forward_cache_L_shape(self, input_tensor, tile_size=None, stride=None):
         # Process each tile in the input tensor through the layers in the fused block
@@ -597,11 +603,12 @@ def find_minimal_mem_usage_fusion_depth(layers, input_tensor):
 idx = 0
 blocks = []
 block_input_tensor = input_tensor
-
+fusion_range = []
 while idx < len(layers):
     temp_layers = layers[idx:]
     end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
     if end_idx is not None:
+        fusion_range.append([idx, idx+end_idx])
         fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
         blocks.append(fusion_block)
         block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
@@ -616,9 +623,10 @@ ori_network_mem = origin_network.calc_memory_usage(input_tensor)
 print("Original Network memory usage:", ori_network_mem)
 
 fusion_network = Network(blocks)
-_ = [l.set_forward_cache_horizon() for l in blocks]
+# _ = [l.set_forward_cache_horizon() for l in blocks]
 fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
 print("Fusion Network memory usage:", fusion_network_mem)
+print("fusion range:", fusion_range)
 
 
 # dummy_block = FusedBlock(layers, input_tensor)
