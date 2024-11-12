@@ -87,8 +87,14 @@ class InferCallNodeType(relay.ExprMutator):
     def visit_var(self, var):
         relay.transform.InferTypeLocal(var)
         return var
+    
+    def visit_constant(self, cnst):
+        relay.transform.InferTypeLocal(cnst)
+        return cnst
 
     def visit_function(self, fn):
+        for p in fn.params:
+            self.visit(p)
         self.visit(fn.body)
         relay.transform.InferTypeLocal(fn)
         return fn
