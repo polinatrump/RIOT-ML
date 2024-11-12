@@ -47,6 +47,8 @@ def calculate_new_input_shape_and_strides(op_info, expected_output_shape):
         new_input_shape[1] = (new_input_shape[1] - 1) * s[1] - 2 * p[1] + d[1] * (k[1]-1) + 1
         new_input_stride[0] = new_input_stride[0] * s[0]
         new_input_stride[1] = new_input_stride[1] * s[1]
+        i['input_tile_size'] = [*new_input_shape]
+        i['input_tile_strides'] = [*new_input_stride]
     return new_input_shape, new_input_stride
 
 
@@ -62,6 +64,7 @@ def create_fusion_block_iteratee(layers_node, block_output_size=1, global_symbol
     op_shape_collector = CollectOpShapeInfo()
     op_shape_collector.visit(layers_node)
     op_info = op_shape_collector.op_info
+    op_to_info_map = op_shape_collector.op_to_info_map
 
     new_input_layout, new_input_stride = calculate_new_input_shape_and_strides(op_info, new_output_hw)
 
@@ -108,6 +111,98 @@ def create_fusion_block_iteratee(layers_node, block_output_size=1, global_symbol
 
     return iteratee_func, new_input_layout, new_input_stride, output_shape
 
+from .op.cache_conv_input import cache_conv_input
+class InsertConvInputCache(relay.ExprMutator):
+    def __init__(self, op_to_info_map):
+        super().__init__()
+        self.op_to_info_map = op_to_info_map  # The new input expression to replace the original input
+
+    def visit_call(self, call):
+        new_args = []
+        for arg in call.args:
+            new_args.append(self.visit(arg))
+        
+        # Check if the call node is a `conv2d` operation
+        if call.op.name == "nn.conv2d":
+            # Replace the input of the `conv2d` with `self.new_input`
+            op_info = self.op_to_info_map[call]
+            input_shape = op_info['input_shape']
+            input_tile_size = op_info['input_tile_size']
+            kernel_size = op_info['kernel_size']
+            strides = op_info['strides']
+            padding = op_info['padding']
+            buffer_shape = [op_info['input_shape'][0], op_info['input_shape'][1], 0, 0]
+            buffer_shape[2] = input_tile_size[0]
+            buffer_shape[3] = op_info['kernel_size'][1]
+
+            print("insert conv cache:", op_info)
+            input_to_cache = new_args[0]
+            if op_info['first_conv']:
+                print("insert dyn slice for first conv node")
+                slice_begin_var = relay.var("iterator", shape=(4,), dtype="int32")
+                input_to_cache = dyn_slice_fixed_size(new_args[0], slice_begin_var, [int(input_shape[0]),int(input_shape[1]), input_tile_size[0], 1])
+
+            cache_out = cache_conv_input(input_to_cache, buffer_shape=buffer_shape, max_idx=[0, 0], 
+                                         conv_kernel_size=kernel_size, conv_strides=strides, conv_padding=padding,
+                                         conv_dtype=call.checked_type.dtype)
+            modified_conv = relay.nn.conv2d(cache_out, *call.args[1:], **call.attrs)
+            
+            return modified_conv
+
+        # For other operations, continue visiting as usual
+        return self.visit(call)
+
+def create_fusion_block_iteratee_with_cache(layers_node, block_output_size=1, global_symbol="iteratee"):
+    iteratee_func = None
+    new_output_hw = [block_output_size, block_output_size]
+    
+    op_shape_collector = CollectOpShapeInfo()
+    op_shape_collector.visit(layers_node)
+    op_info = op_shape_collector.op_info
+    op_to_info_map = op_shape_collector.op_to_info_map
+
+    new_input_layout, new_input_stride = calculate_new_input_shape_and_strides(op_info, new_output_hw)
+
+    conv_chain_node = layers_node
+    conv_chain_node_cp = copy.deepcopy(conv_chain_node)
+
+    conv_chain_params = relay.analysis.free_vars(conv_chain_node)
+    conv_chain_params_cp =  relay.analysis.free_vars(conv_chain_node_cp)
+    input_var = conv_chain_params_cp[0]
+    input_shape = input_var.checked_type.shape
+    in_w = int(input_shape[-2])
+    in_h = int(input_shape[-1])
+
+    output_shape = conv_chain_node.checked_type.shape
+
+    conv_chain_block = InsertConvInputCache(op_to_info_map).visit(conv_chain_node)
+
+    conv_chain_block = InferCallNodeType().visit(conv_chain_block)
+
+    iterator_var = None
+    cache_vars = []
+
+    params_var = relay.analysis.free_vars(conv_chain_block)
+    for v in params_var:
+        if (str(v.name_hint) == 'iterator'):
+            iterator_var = v
+        elif (str(v.name_hint).startswith('cache')):
+            cache_vars.append(v)
+
+    conv_chain_block_params = [iterator_var, *conv_chain_params, *cache_vars]
+
+    iteratee_func = relay.Function(conv_chain_block_params, conv_chain_block).with_attr("Primitive", tvm.tir.IntImm("int32", 1))
+
+    iteratee_func = InferCallNodeType().visit(iteratee_func).with_attr("global_symbol", global_symbol)
+
+    return iteratee_func, conv_chain_params, cache_vars, new_input_layout, new_input_stride, output_shape, input_shape
+
+def create_zeros_for_vars(vars):
+    zeros_vars = []
+    for v in vars:
+        z = relay.zeros(shape=v.type_annotation.shape, dtype=v.type_annotation.dtype)
+        zeros_vars.append(z)
+    return zeros_vars
 
 from .op.fusion_iter_worker import fusion_iter_worker
 from .op.strategy import conv2d
@@ -133,28 +228,28 @@ if __name__=="__main__":
     func = relay.Function([data, weight1, weight2, weight3], conv3)
     mod = tvm.IRModule.from_expr(func)
     mod = relay.transform.InferType()(mod)
-    iteratee_func, new_input_layout, new_input_stride, output_shape = create_fusion_block_iteratee(mod["main"].body, 1)
+    iteratee_func, conv_chain_params, cache_vars, new_input_layout, new_input_stride, output_shape, input_shape = create_fusion_block_iteratee_with_cache(mod["main"].body, 1)
 
+    cache_zeros = create_zeros_for_vars(cache_vars)
 
-    in_w = 224
-    in_h = 224
-    iter_begin = [0,0, *new_input_stride]
+    in_w = input_shape[2]
+    in_h = input_shape[3]
+    iter_begin = [0,0,0,0]
     iter_end = [0, 0, in_w - new_input_layout[0] + 1, in_h - new_input_layout[1] + 1]
     iter_strides = [1,1, *new_input_stride]
-    iterator = relay.zeros(shape=(4,), dtype="int32")
+    # iterator = relay.zeros(shape=(4,), dtype="int32")
     # iter_output_var = relay.zeros(shape=(1,64,15,15), dtype="float32")
 
     # # dummy_var to keep the iteratee not to be optimized out
     # dummy_var = relay.Call(iteratee_func, [iterator, data, weight1, weight2, weight3], tvm.ir.make_node("DictAttrs", iteratee_dummy=1))
     # dummy_var = relay.zeros(shape=(4,), dtype="float32")
     
-    iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,[data, weight1, weight2, weight3], iteratee_func)
+    iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,[data, weight1, weight2, weight3, *cache_zeros], iteratee_func)
     
 
     iter_body = relay.Function(relay.analysis.free_vars(iter_worker), iter_worker)
 
     # iter_body = EliminateIterateeDummyCallNode().visit(iter_body)
-    # breakpoint()
 
     iteratee_mod = tvm.IRModule.from_expr(iter_body)
     iteratee_mod['iteratee'] = iteratee_func

@@ -111,6 +111,55 @@ def wrap_fusion_iter_worker_compute_tir(attrs, inputs, output_type):
     
     return _fusion_iter_worker_compute_tir
 
+# Define the compute function for the my_add operator
+def wrap_fusion_iter_worker_with_cache_compute_tir(attrs, inputs, output_type):
+    def _fusion_iter_worker_compute_tir(ins, outs):
+        input_tensors = inputs
+        ins_data = [i.data for i in ins]
+        begin = attrs["iter_begin"]
+        end = attrs["iter_end"]
+        strides = attrs["iter_strides"]
+        func = attrs["relay_func"]
+        
+        ib = tvm.tir.ir_builder.create()
+        iterator = ib.allocate("int32", (4,),  "iterator")
+        iterator[0]=iterator[1]=iterator[2]=iterator[3]=0
+        iteratee_output = ib.allocate(func.body.checked_type.dtype, func.body.checked_type.shape,  "iteratee_output")
+        bg_ind = ib.allocate("int32", (4,),  "bg_ind")
+        bg_ind[0]=bg_ind[1]=bg_ind[2]=bg_ind[3]=0
+
+        iterator[2] = begin[2]
+
+        def set_cur_idx_var_zero():
+            for i in ins:
+                if i.shape[0] == 4:
+                    i_ptr = ib.buffer_ptr(i)
+                    i_ptr[0]=i_ptr[1]=i_ptr[2]=i_ptr[3]=0
+
+        output_shape = attrs['output_shape']
+        with ib.while_loop(bg_ind[2] < output_shape[2] - 1):
+            iterator[3] = begin[3]
+            bg_ind[3] = 0
+            set_cur_idx_var_zero()
+            with ib.while_loop(bg_ind[3] < output_shape[3] - 1):
+                with ib.if_scope(tvm.tir.call_extern("int32", 
+                        "tvmgen_default_" + func.attrs["global_symbol"],
+                        iterator.asobject().data,
+                        *ins_data, 
+                        iteratee_output.asobject().data) == 0):
+                    copy_in_place_spatial_ib(ib, outs[0], iteratee_output.asobject(), bg_ind.asobject())
+                    bg_ind[3] = bg_ind[3] + 1
+                    with ib.if_scope(bg_ind[3] ==  output_shape[3] - 1):
+                        bg_ind[2] = bg_ind[2] + 1                        
+
+                iterator[3] += strides[3]
+            iterator[2] += strides[2]
+        ib_stmt = ib.get()
+        # breakpoint()
+        return ib_stmt
+    
+    return _fusion_iter_worker_compute_tir
+
 @relay.op.op.register_compute("fusion_iter_worker")
 def fusion_iter_worker_compute(attrs, inputs, output_type):
     print("We are now at fusion_iter_worker_comp")
@@ -122,7 +171,7 @@ def fusion_iter_worker_compute(attrs, inputs, output_type):
     # iterator = tvm.te.placeholder((4,), name="iterator", dtype="int32")
     # breakpoint()
     return [tvm.te.extern(attrs["output_shape"], inputs,
-               wrap_fusion_iter_worker_compute_tir(attrs, inputs, output_type),
+               wrap_fusion_iter_worker_with_cache_compute_tir(attrs, inputs, output_type),
             name="fusion_iter_worker", dtype=func.body.checked_type.dtype),
             # tvm.te.extern_primfunc([*inputs], prim_func)
 ]
