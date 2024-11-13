@@ -380,10 +380,10 @@ from tvm.relay import dataflow_pattern as dfp
 
 if __name__=="__main__":
     
-    mod = create_mbv2_fake_int8()
+    mod_ori = create_mbv2_fake_int8()
 
     fusion_range = [[0, 12], [13, 21], [22, 24], [25, 27], [28, 30], [31, 33], [34, 36], [37, 39], [40, 42], [43, 45], [46, 48], [49, 51]]
-    fusion_rewriter = MultiStageFusionNetworkRewriter(fusion_range, mod["main"])  
+    fusion_rewriter = MultiStageFusionNetworkRewriter(fusion_range, mod_ori["main"])  
     
     fusion_body = fusion_rewriter.fused_neural_network
 
@@ -391,10 +391,24 @@ if __name__=="__main__":
 
     # breakpoint()
 
-    mod = tvm.IRModule.from_expr(fusion_body)
-    mod = relay.transform.InferType()(mod)
+    mod_fusion = tvm.IRModule.from_expr(fusion_body)
+    mod_fusion = relay.transform.InferType()(mod_fusion)
 
-    breakpoint()
+    mod = mod_fusion
+
+    def create_np_ramdon_params_for(mod):
+        relay_params = mod["main"].params
+        params = {}
+
+        for p in relay_params:
+            if p.name_hint == 'data':
+                continue
+            shape = [int(i) for i in p.type_annotation.shape]
+            nd_arr = tvm.nd.array(np.random.randint(-255, 254, size=shape).astype(np.int8))
+            params[p.name_hint] = nd_arr
+        return params
+    params = create_np_ramdon_params_for(mod)
+    # breakpoint()
 
     RUNTIME = tvm.relay.backend.Runtime("crt", {'system-lib':False}) # should not use 'system-lib:true' while AoT
     EXECUTOR = tvm.relay.backend.Executor(
@@ -426,7 +440,7 @@ if __name__=="__main__":
                                                     # instruments=[PrintBeforeAll(),PrintAfterAll()]
                                                     ): 
 
-        module = relay.build(mod, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
+        module = relay.build(mod_ori, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
     export_model_library_format(module, "./models/default/default.tar")
     generate_mlmci_files(module, params, "./")
 
