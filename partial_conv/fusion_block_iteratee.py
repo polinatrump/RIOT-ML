@@ -244,7 +244,8 @@ if __name__=="__main__":
     # dummy_var = relay.Call(iteratee_func, [iterator, data, weight1, weight2, weight3], tvm.ir.make_node("DictAttrs", iteratee_dummy=1))
     # dummy_var = relay.zeros(shape=(4,), dtype="float32")
     
-    iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,[data, weight1, weight2, weight3, *cache_zeros], iteratee_func)
+    iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,
+                                     [data, weight1, weight2, weight3], iteratee_func, cache_vars=cache_vars)
     
 
     iter_body = relay.Function(relay.analysis.free_vars(iter_worker), iter_worker)

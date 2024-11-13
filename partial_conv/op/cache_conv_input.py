@@ -70,20 +70,19 @@ def _compute(attrs, inputs, output_type):
         buffer = ib.buffer_ptr(buffer_var_buf)
         cur_idx = ib.buffer_ptr(current_idx_buf)
         out = ib.buffer_ptr(out_buf)
-
         #shrift elements inside buffer
-        with ib.for_range(0 , buffer_shape[0], "n") as n: # begin of for loop has to be zero for c codegen...
-            with ib.for_range(0,  buffer_shape[1], "i") as i:
-                with ib.for_range(0, buffer_shape[2], "j") as j:
-                    with ib.for_range(0, buffer_shape[3] - data_w, "k") as k:
-                        buffer[n , i , j , k] = buffer[n, i , j , k + data_w]
+        # with ib.for_range(0 , buffer_shape[0], "n") as n: # begin of for loop has to be zero for c codegen...
+        #     with ib.for_range(0,  buffer_shape[1], "i") as i:
+        #         with ib.for_range(0, buffer_shape[2], "j") as j:
+        #             with ib.for_range(0, buffer_shape[3] - data_w, "k") as k:
+        #                 buffer[n , i , j , k] = buffer[n, i , j , k + data_w]
 
         #Copy new data to buffer
         with ib.for_range(0 , buffer_shape[0], "n") as n: # begin of for loop has to be zero for c codegen...
             with ib.for_range(0,  buffer_shape[1], "i") as i:
                 with ib.for_range(0, buffer_shape[2], "j") as j:
                     with ib.for_range(0, data_w, "k") as k:
-                        buffer[n , i , j , buffer_shape[3] - data_w + k] = data[n, i , j , k]
+                        buffer[n , i , j , cur_idx[3] % (buffer_shape[3] - data_w + k)] = data[n, i , j , k]
 
         cur_idx[3] = cur_idx[3] + data_w
 
