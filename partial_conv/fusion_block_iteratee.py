@@ -145,6 +145,8 @@ class InsertConvInputCache(relay.ExprMutator):
             cache_out = cache_conv_input(input_to_cache, buffer_shape=buffer_shape, max_idx=[0, 0], 
                                          conv_kernel_size=kernel_size, conv_strides=strides, conv_padding=padding,
                                          conv_dtype=call.checked_type.dtype)
+            attrs = {**call.attrs}
+            attrs['padding'] = [0,0,0,0] # Let cache manager to care about padding 
             modified_conv = relay.nn.conv2d(cache_out, *call.args[1:], **call.attrs)
             
             return modified_conv

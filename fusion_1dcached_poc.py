@@ -45,7 +45,9 @@ if __name__=="__main__":
                 }
 
     conv1 = relay.nn.conv2d(data, weight1, kernel_size=(7, 7))
-    conv2 = relay.nn.conv2d(conv1, weight2, kernel_size=(3, 3))
+    conv2 = relay.nn.conv2d(conv1, weight2, kernel_size=(3, 3),
+                             strides=(2,2), padding=(1,1)
+                             )
     conv3 = relay.nn.conv2d(conv2, weight3, kernel_size=(3, 3))
     func = relay.Function([data, weight1, weight2, weight3], conv3)
     mod = tvm.IRModule.from_expr(func)
@@ -100,7 +102,7 @@ if __name__=="__main__":
     with tvm.transform.PassContext(opt_level=0, config={
                                                     "tir.disable_vectorize": True, 
                                                     "tir.usmp.enable": True, # what is usmp? -> Enable Unified Static Memory Planning
-                                                    "tir.usmp.algorithm": "greedy_by_size",
+                                                    "tir.usmp.algorithm": "hill_climb",
                                                     "relay.backend.use_auto_scheduler": True,
                                                     "relay.remove_standalone_reshapes.enable": False
                                                     },
@@ -108,7 +110,7 @@ if __name__=="__main__":
                                                     ): 
         # print(params.keys())
         # opt_module, _ = relay.optimize(mod, target=TARGET)
-        module = relay.build(mod, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
+        module = relay.build(iteratee_mod, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
 
     from tvm.micro import export_model_library_format
 

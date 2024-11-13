@@ -14,6 +14,8 @@ class CollectOpShapeInfo(relay.ExprVisitor):
         super().__init__()
         self.op_info = []
         self.op_to_info_map_ = {}
+        self.first_conv_set = False
+        self.cur_conv_index = 0
 
     def collect_op_info(self, op):
         input_shape = tuple(int(dim) for dim in op.args[0].checked_type.shape)
@@ -32,19 +34,22 @@ class CollectOpShapeInfo(relay.ExprVisitor):
             'groups': groups,
             'input_tile_size': None,
             'input_tile_strides': None,
-            'first_conv': False
+            'first_conv': False,
+            'conv_index' : None
         }
-        if op.op.name == 'nn.conv2d':
+        if op.op.name == 'nn.conv2d' and not self.first_conv_set:
             op_info_['first_conv'] = True
-            for i in self.op_info:
-                i["first_conv"] = False
+            self.first_conv_set = True
+        if op.op.name == 'nn.conv2d':
+            op_info_['conv_index'] = self.cur_conv_index
+            self.cur_conv_index += 1
         self.op_info.append(op_info_)
         self.op_to_info_map_[op] = op_info_
 
     def visit_call(self, call):
-        self.collect_op_info(call)
         for arg in call.args:
             self.visit(arg)
+        self.collect_op_info(call)
 
     # def op_info(self):
     #     return self.op_info
