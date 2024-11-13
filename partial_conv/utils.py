@@ -138,12 +138,12 @@ class ReWriteSwapVars(relay.ExprMutator):
     """
     def __init__(self, name_to_var):
         super().__init__()
-        self.name_to_shape = name_to_var
+        self.name_to_var = name_to_var
 
     def visit_var(self, var):
-        if var.name_hint in self.name_to_shape:
-            print(f'Change Shape of params {var.name_hint}, {var.type_annotation.shape} to {self.name_to_shape[var.name_hint]}')
-            d = self.name_to_shape[var.name_hint]
+        if var.name_hint in self.name_to_var:
+            print(f'Change Shape of params {var.name_hint}, {var.type_annotation.shape} to {self.name_to_var[var.name_hint]}')
+            d = self.name_to_var[var.name_hint]
             return d
         else:
             print("Do nothing for other cases")

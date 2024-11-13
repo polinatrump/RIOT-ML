@@ -367,24 +367,34 @@ def create_mbv2_fake_int8(input_size=(1, 3, 224, 224)):
     dense_weight = relay.var("dense_weight", shape=(1, 1280))
     dummpy_dense = relay.nn.dense(reshape, dense_weight)
 
-    func = relay.Function(relay.analysis.free_vars(dummpy_dense), dummpy_dense)
+    body = conv2d_2 # TODO
+
+    func = relay.Function(relay.analysis.free_vars(body), body)
 
     mod = tvm.IRModule.from_expr(func)
     mod = relay.transform.InferType()(mod)
     return mod
 
-from partial_conv.fusion_network_rewrite import MultiFusionNetworkRewriter
+from partial_conv.fusion_network_rewrite import MultiStageFusionNetworkRewriter
 from tvm.relay import dataflow_pattern as dfp
 
 if __name__=="__main__":
     
     mod = create_mbv2_fake_int8()
 
-    fusion_rewriter = MultiFusionNetworkRewriter()
+    fusion_range = [[0, 12], [13, 21], [22, 24], [25, 27], [28, 30], [31, 33], [34, 36], [37, 39], [40, 42], [43, 45], [46, 48], [49, 51]]
+    fusion_rewriter = MultiStageFusionNetworkRewriter(fusion_range, mod["main"])  
+    
+    fusion_body = fusion_rewriter.fused_neural_network
 
-    func = dfp.rewrite(fusion_rewriter, mod["main"])
+    # func = relay.Function(relay.analysis.free_vars(fusion_body), fusion_body)
 
-    print(fusion_rewriter.op_info)
+    # breakpoint()
+
+    mod = tvm.IRModule.from_expr(fusion_body)
+    mod = relay.transform.InferType()(mod)
+
+    breakpoint()
 
     RUNTIME = tvm.relay.backend.Runtime("crt", {'system-lib':False}) # should not use 'system-lib:true' while AoT
     EXECUTOR = tvm.relay.backend.Executor(
@@ -411,12 +421,14 @@ if __name__=="__main__":
                                                     "tir.usmp.enable": True, # what is usmp? -> Enable Unified Static Memory Planning
                                                     "tir.usmp.algorithm": "hill_climb",
                                                     "relay.backend.use_auto_scheduler": True, # Keep that for Primitive Function with multiple heavy ops (like Convs)
+                                                    "relay.remove_standalone_reshapes.enable": False
                                                     },
                                                     # instruments=[PrintBeforeAll(),PrintAfterAll()]
                                                     ): 
 
         module = relay.build(mod, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
     export_model_library_format(module, "./models/default/default.tar")
+    generate_mlmci_files(module, params, "./")
 
 
 

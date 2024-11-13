@@ -139,7 +139,7 @@ def wrap_fusion_iter_worker_with_cache_compute_tir(attrs, inputs, output_type):
         iterator = ib.allocate("int32", (4,),  "iterator", scope="global")
         iterator[0]=iterator[1]=iterator[2]=iterator[3]=0
         iteratee_output = ib.allocate(func.body.checked_type.dtype, func.body.checked_type.shape,  "iteratee_output", scope="global")
-        iteratee_output[0] = 0.0
+        iteratee_output[0] = tvm.runtime.const(0, dtype=iteratee_output.dtype)
         bg_ind = ib.allocate("int32", (4,),  "bg_ind", scope="global")
         bg_ind[0]=bg_ind[1]=bg_ind[2]=bg_ind[3]=0
 
@@ -152,7 +152,7 @@ def wrap_fusion_iter_worker_with_cache_compute_tir(attrs, inputs, output_type):
                 if i.asobject().shape[0] == 4:
                     i[0]=i[1]=i[2]=i[3]=0
                 else:
-                    i[0] = 0.0
+                    i[0] = tvm.runtime.const(0, dtype=i.dtype)
         output_shape = attrs['output_shape']
         
         iterator[2] = begin[2]

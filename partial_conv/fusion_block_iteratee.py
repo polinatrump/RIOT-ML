@@ -22,7 +22,7 @@ def copy_var_with_new_name(var, name=None):
 def calculate_new_input_shape_and_strides(op_info, expected_output_shape):
     new_input_shape = [*expected_output_shape]
     new_input_stride = [*expected_output_shape]
-    for i in op_info:
+    for i in op_info[::-1]:
         s = [1, 1]
         d = [1, 1]
         p = [0, 0]
@@ -141,13 +141,17 @@ class InsertConvInputCache(relay.ExprMutator):
                 print("insert dyn slice for first conv node")
                 slice_begin_var = relay.var("iterator", shape=(4,), dtype="int32")
                 input_to_cache = dyn_slice_fixed_size(new_args[0], slice_begin_var, [int(input_shape[0]),int(input_shape[1]), input_tile_size[0], 1])
-
-            cache_out = cache_conv_input(input_to_cache, buffer_shape=buffer_shape, max_idx=[0, 0], 
-                                         conv_kernel_size=kernel_size, conv_strides=strides, conv_padding=padding,
-                                         conv_dtype=call.checked_type.dtype)
+            
+            if not kernel_size == [1, 1]:
+                cache_out = cache_conv_input(input_to_cache, buffer_shape=buffer_shape, max_idx=[0, 0], 
+                                            conv_kernel_size=kernel_size, conv_strides=strides, conv_padding=padding,
+                                            conv_dtype=call.checked_type.dtype)
+            else:
+                cache_out = input_to_cache
+            
             attrs = {**call.attrs}
             attrs['padding'] = [0,0,0,0] # Let cache manager to care about padding 
-            modified_conv = relay.nn.conv2d(cache_out, *call.args[1:], **call.attrs)
+            modified_conv = relay.nn.conv2d(cache_out, *call.args[1:], **attrs)
             
             return modified_conv
 
@@ -157,7 +161,7 @@ class InsertConvInputCache(relay.ExprMutator):
 def create_fusion_block_iteratee_with_cache(layers_node, block_output_size=1, global_symbol="iteratee"):
     iteratee_func = None
     new_output_hw = [block_output_size, block_output_size]
-    
+    layers_node = InferCallNodeType().visit(layers_node)
     op_shape_collector = CollectOpShapeInfo()
     op_shape_collector.visit(layers_node)
     op_info = op_shape_collector.op_info

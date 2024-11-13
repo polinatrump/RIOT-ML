@@ -10,46 +10,97 @@ from tvm.micro import export_model_library_format
 
 import copy
 
-from .fusion_block_iteratee import create_fusion_block_iteratee
+from .fusion_block_iteratee import create_fusion_block_iteratee, create_fusion_block_iteratee_with_cache
 from .dyn_slice_fixed_size import dyn_slice_fixed_size
 
 from .op.copy_inplace import copy_in_place_spatial
 from .op.fusion_iter_worker import fusion_iter_worker
 
-from .utils import CollectOpShapeInfo
+from .utils import CollectOpShapeInfo, ReWriteSwapVars
 
-class MultiFusionNetworkRewriter(dfp.DFPatternCallback):
-    def __init__(self):
+
+
+class MultiStageFusionNetworkRewriter(relay.ExprMutator):
+    def __init__(self, fusion_indices, neural_network):
         super().__init__()
+        self.fusion_indices = fusion_indices # [[begin_conv_idx1, end_conv_idx1], [begin_conv_idx2, end_conv_idx2] ...] #end_idx2 should include the last layer
         
-        # Define the patterns for conv2d, avg_pool2d, and dense
-        self.pool = dfp.is_op("nn.max_pool2d")(dfp.wildcard())
-        self.conv2d = dfp.is_op("nn.conv2d")(dfp.wildcard(), dfp.wildcard())
-        self.avg_pool2d = dfp.is_op("nn.avg_pool2d")(self.conv2d | self.pool)
-        self.reshape = dfp.is_op("reshape")(self.avg_pool2d | self.conv2d)
-        self.dense = dfp.is_op("nn.dense")(self.avg_pool2d | self.conv2d | self.reshape, dfp.wildcard())
-
-        # Define the overall pattern: multiple conv2d -> avg_pool2d -> dense
-        self.pattern = self.dense
+        self.swap_var_to_node_input_arg_map = {}
+        self.cur_dummy_input_var = None
+        self.cur_fusion_begin_node = None
+        self.neural_network = neural_network
+        # self.conv_node_to_ori_args_map = {}
 
         # To record input/output shapes and other attributes
-        self.op_info = []
+        info_collector = CollectOpShapeInfo()
+        info_collector.visit(self.neural_network)
+        self.op_info = info_collector.op_info
+        self.op_to_info_map = info_collector.op_to_info_map
+        self.fused_neural_network_ = self.visit(self.neural_network)
 
-        self.external_funcs = None
+    @property
+    def fused_neural_network(self):
+        return self.fused_neural_network_
 
-    def callback(self, pre, post, node_map):
-        # Step 2: Record Input/Output Shapes and Attributes
+    def visit_call(self, call):
+        new_args = []
+        for arg in call.args:
+            new_args.append(self.visit(arg))
         
-        conv_nodes = node_map[self.conv2d]
-        avg_pool_node = node_map[self.avg_pool2d][0]
-        dense_node = node_map[self.dense][0]
-        reshape_node = node_map[self.reshape][0]
-        
-        op_shape_collector = CollectOpShapeInfo()
-        op_shape_collector.visit(dense_node)
-        self.op_info = op_shape_collector.op_info
+        if call.op.name == "nn.conv2d":
+            # Replace the input of the `conv2d` with `self.new_input`
+            op_info = self.op_to_info_map[call]
+            conv_idx = op_info['conv_index']
+            input_shape = op_info['input_shape']
+            is_fusion_begin = False
+            is_fusion_end = False
 
-        return dense_node
+            for indices in self.fusion_indices:
+                if indices[0] == conv_idx:
+                    is_fusion_begin = True
+                    break
+                if indices[1] == conv_idx:
+                    is_fusion_end = True
+                    break
+            if is_fusion_begin:
+                
+
+                dummy_input_var = relay.var(f"dummy_input_{conv_idx}", shape=input_shape, dtype=call.args[0].checked_type.dtype)
+                self.swap_var_to_node_input_arg_map[dummy_input_var] = new_args[0]
+                self.cur_dummy_input_var = dummy_input_var
+                modified_conv = relay.nn.conv2d(dummy_input_var, *new_args[1:], **call.attrs)
+                self.cur_fusion_begin_node = modified_conv
+                return modified_conv
+            
+            elif is_fusion_end:
+                new_normal_conv = relay.nn.conv2d(*new_args, **call.attrs)
+                iteratee_func, conv_chain_params, cache_vars, \
+                new_input_layout, new_input_stride, \
+                output_shape, input_shape = create_fusion_block_iteratee_with_cache(new_normal_conv, 1, f'iteratee_{conv_idx}')
+                # breakpoint()
+                in_w = input_shape[2]
+                in_h = input_shape[3]
+                iter_begin = [0,0,0,0]
+                iter_end = [0, 0, in_w - new_input_layout[0] + 1, in_h - new_input_layout[1] + 1]
+                iter_strides = [1,1, *new_input_stride]
+
+                iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,
+                                     conv_chain_params, iteratee_func, cache_vars=cache_vars)
+                
+                name_to_var = {self.cur_dummy_input_var.name_hint: self.swap_var_to_node_input_arg_map[self.cur_dummy_input_var]}
+
+                iter_worker = ReWriteSwapVars(name_to_var).visit(iter_worker)
+
+                # breakpoint()
+
+                return iter_worker
+            
+            else:
+                modified_conv = relay.nn.conv2d(*new_args, **call.attrs)
+                return modified_conv
+
+        return self.visit(call)
+
     
 
 class MultiFusionConv2DWorker(relay.ExprMutator):

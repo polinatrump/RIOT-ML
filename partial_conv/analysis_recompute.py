@@ -604,11 +604,11 @@ idx = 0
 blocks = []
 block_input_tensor = input_tensor
 fusion_range = []
-while idx < len(layers):
+while idx < len(layers) - 1:
     temp_layers = layers[idx:]
     end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
     if end_idx is not None:
-        fusion_range.append([idx, idx+end_idx])
+        fusion_range.append([idx, idx+end_idx-1])
         fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
         blocks.append(fusion_block)
         block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)

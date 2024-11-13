@@ -102,7 +102,7 @@ if __name__=="__main__":
     with tvm.transform.PassContext(opt_level=0, config={
                                                     "tir.disable_vectorize": True, 
                                                     "tir.usmp.enable": True, # what is usmp? -> Enable Unified Static Memory Planning
-                                                    "tir.usmp.algorithm": "hill_climb",
+                                                    "tir.usmp.algorithm": "greedy_by_size",
                                                     "relay.backend.use_auto_scheduler": True,
                                                     "relay.remove_standalone_reshapes.enable": False
                                                     },
