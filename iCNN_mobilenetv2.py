@@ -306,6 +306,9 @@ def MBConv_Fake_INT8(input ,intput_channel, output_channel, expansion=1, stride=
     global idx_iter
     i = next(idx_iter)
 
+    intput_channel = int(intput_channel)
+    output_channel = int(output_channel)
+
     weight_1x1_conv2d = relay.var(f"weight_1x1_conv2d_{i}", shape=(intput_channel * expansion, intput_channel, 1, 1), dtype="int8")
     _1x1_conv2d = relay.nn.conv2d(input, weight_1x1_conv2d, kernel_size=(1, 1), out_dtype="int8")
 
@@ -323,48 +326,48 @@ def MBConv_Fake_INT8(input ,intput_channel, output_channel, expansion=1, stride=
 
     return _1x1_conv2d_linear
 
-def create_mbv2_fake_int8(input_size=(1, 3, 224, 224)):
+def create_mbv2_fake_int8(input_size=(1, 3, 224, 224), w=1):
     MBConv=MBConv_Fake_INT8
     data = relay.var("data", shape=input_size, dtype="int8")
 
-    weight1 = relay.var("conv2d_1", shape=(32, 3, 3 ,3), dtype="int8")
+    weight1 = relay.var("conv2d_1", shape=(int(32*w), input_size[1], 3 ,3), dtype="int8")
     conv2d_1 = relay.nn.conv2d(data, weight1, kernel_size=(3, 3), strides=(2, 2), 
                                padding=(1,1), 
                                out_dtype="int8"
                                )
 
-    mb = MBConv(conv2d_1, 32, 16, 1, 1)
+    mb = MBConv(conv2d_1, 32*w, 16*w, 1, 1)
    
-    mb = MBConv(mb, 16, 24, 6, 2)
-    mb = MBConv(mb, 24, 24, 6, 1)
+    mb = MBConv(mb, 16*w, 24*w, 6, 2)
+    mb = MBConv(mb, 24*w, 24*w, 6, 1)
 
-    mb = MBConv(mb, 24, 32, 6, 2)
+    mb = MBConv(mb, 24*w, 32*w, 6, 2)
 
-    mb = MBConv(mb, 32, 32, 6, 1)
-    mb = MBConv(mb, 32, 32, 6, 1)
+    mb = MBConv(mb, 32*w, 32*w, 6, 1)
+    mb = MBConv(mb, 32*w, 32*w, 6, 1)
 
-    mb = MBConv(mb, 32, 64, 6, 2)
-    mb = MBConv(mb, 64, 64, 6, 1)
-    mb = MBConv(mb, 64, 64, 6, 1)
-    mb = MBConv(mb, 64, 64, 6, 1)
+    mb = MBConv(mb, 32*w, 64*w, 6, 2)
+    mb = MBConv(mb, 64*w, 64*w, 6, 1)
+    mb = MBConv(mb, 64*w, 64*w, 6, 1)
+    mb = MBConv(mb, 64*w, 64*w, 6, 1)
 
-    mb = MBConv(mb, 64, 96, 6, 1)
-    mb = MBConv(mb, 96, 96, 6, 1)
-    mb = MBConv(mb, 96, 96, 6, 1)
+    mb = MBConv(mb, 64*w, 96*w, 6, 1)
+    mb = MBConv(mb, 96*w, 96*w, 6, 1)
+    mb = MBConv(mb, 96*w, 96*w, 6, 1)
 
-    mb = MBConv(mb, 96, 160, 6, 2)
-    mb = MBConv(mb, 160, 160, 6, 1)
-    mb = MBConv(mb, 160, 160, 6, 1)
+    mb = MBConv(mb, 96*w, 160*w, 6, 2)
+    mb = MBConv(mb, 160*w, 160*w, 6, 1)
+    mb = MBConv(mb, 160*w, 160*w, 6, 1)
 
-    mb = MBConv(mb, 160, 320, 6, 1)
+    mb = MBConv(mb, 160*w, 320*w, 6, 1)
 
-    weight2 = relay.var("conv2d_2", shape=(1280, 320, 1 ,1), dtype="int8")
+    weight2 = relay.var("conv2d_2", shape=(int(1280*w), int(320*w), 1 ,1), dtype="int8")
     conv2d_2 = relay.nn.conv2d(mb, weight2, kernel_size=(1, 1), out_dtype="int8")
     global_avg_pool = relay.nn.avg_pool2d(conv2d_2, pool_size=(7, 7))
 
     ### Dummy Block ###
-    reshape = relay.reshape(global_avg_pool, (1,1280,))
-    dense_weight = relay.var("dense_weight", shape=(1, 1280))
+    reshape = relay.reshape(global_avg_pool, (1,int(1280*w),))
+    dense_weight = relay.var("dense_weight", shape=(1, int(1280*w)))
     dummpy_dense = relay.nn.dense(reshape, dense_weight)
 
     body = conv2d_2 # TODO
@@ -380,7 +383,7 @@ from tvm.relay import dataflow_pattern as dfp
 
 if __name__=="__main__":
     
-    mod_ori = create_mbv2_fake_int8()
+    mod_ori = create_mbv2_fake_int8(input_size=(1, 3, 224, 224), w=1)
 
     fusion_range = [[0, 12], [13, 21], [22, 24], [25, 27], [28, 30], [31, 33], [34, 36], [37, 39], [40, 42], [43, 45], [46, 48], [49, 51]]
     fusion_rewriter = MultiStageFusionNetworkRewriter(fusion_range, mod_ori["main"])  
@@ -440,7 +443,7 @@ if __name__=="__main__":
                                                     # instruments=[PrintBeforeAll(),PrintAfterAll()]
                                                     ): 
 
-        module = relay.build(mod_ori, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
+        module = relay.build(mod, target=TARGET, runtime=RUNTIME, params=None, executor=EXECUTOR)
     export_model_library_format(module, "./models/default/default.tar")
     generate_mlmci_files(module, params, "./")
 

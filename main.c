@@ -73,6 +73,8 @@ void per_model_eval(void)
     (void) printf("Press any key to start >\n");
     (void) getchar();
 #endif
+    // SCB_EnableDCache();
+    // SCB_EnableICache();
 
     random_init(UTOE_RANDOM_SEED);
     uint32_t start, end;

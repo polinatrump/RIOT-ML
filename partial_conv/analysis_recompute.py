@@ -126,7 +126,8 @@ class ConvLayer(Layer):
 
         self._memory_usage = output_tensor.size + input_tensor.size
         
-        self.tile_buffer_size = output_tensor.size
+        # self.tile_buffer_size = output_tensor.size
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
 
         self.MAC_per_element = input_tensor.shape[2] * (self.kernel_size**2)
 
@@ -167,7 +168,8 @@ class DepthwiseConv(Layer):
         else:
             self._memory_usage = output_tensor.size + input_tensor.size
 
-        self.tile_buffer_size = output_tensor.size
+        # self.tile_buffer_size = output_tensor.size
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
         self.MAC_per_element = (self.kernel_size**2)
 
         self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
@@ -201,7 +203,8 @@ class PoolingLayer(Layer):
         self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
 
         self._memory_usage = output_tensor.size + input_tensor.size
-        self.tile_buffer_size = output_tensor.size
+        # self.tile_buffer_size = output_tensor.size
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
 
         self.MAC_per_element = (self.kernel_size**2)
 
@@ -240,7 +243,8 @@ class FusedBlock:
 
         else:
             layer_mem_max =max([l.memory_usage for l in self.layers])
-            print("layer peak usage:", layer_mem_max, [l.memory_usage for l in self.layers])
+            # print("layer peak usage:", layer_mem_max, [l.memory_usage for l in self.layers])
+            print("layer peak usage:", layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size)
             return layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size
     
     @property
