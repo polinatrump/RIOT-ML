@@ -217,34 +217,38 @@ def find_minimal_mem_usage_fusion_depth(layers, input_tensor):
         depth = np.argmin(mem_usage_lst) + 1       
     return depth
 
-idx = 0
-blocks = []
-block_input_tensor = input_tensor
-fusion_range = []
-while idx < len(layers) - 1:
-    temp_layers = layers[idx:]
-    end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
-    if end_idx is not None:
-        fusion_range.append([idx, idx+end_idx-1])
-        fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=4, cache=True)
-        blocks.append(fusion_block)
-        block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
-    else:
-        end_idx = 1
-        blocks = [*blocks, *layers[idx:idx+end_idx]]
-        block_input_tensor = np.zeros(blocks[-1].common_output_shape)
-    idx += end_idx
+# idx = 0
+# blocks = []
+# block_input_tensor = input_tensor
+# fusion_range = []
+# while idx < len(layers) - 1:
+#     temp_layers = layers[idx:]
+#     end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
+#     if end_idx is not None:
+#         fusion_range.append([idx, idx+end_idx-1])
+#         fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
+#         blocks.append(fusion_block)
+#         block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
+#     else:
+#         end_idx = 1
+#         blocks = [*blocks, *layers[idx:idx+end_idx]]
+#         block_input_tensor = np.zeros(blocks[-1].common_output_shape)
+#     idx += end_idx
 
 origin_network = Network(layers)
 ori_network_mem = origin_network.calc_memory_usage(input_tensor)
 print("Original Network memory usage:", ori_network_mem)
 
-fusion_network = Network(blocks)
-fusion_network.reset_compute_counter()
-_ = [l.set_forward_cache_horizon() for l in blocks]
-fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
-print("Fusion Network memory usage:", fusion_network_mem)
-print("fusion range:", fusion_range)
+from .analysis.memory_first import DPOptimizer
+optimizer = DPOptimizer()
+mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
+breakpoint()
+# fusion_network = Network(blocks)
+# fusion_network.reset_compute_counter()
+# # _ = [l.set_forward_cache_horizon() for l in blocks]
+# fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
+# print("Fusion Network memory usage:", fusion_network_mem)
+# print("fusion range:", fusion_range)
 
 
 # dummy_block = FusedBlock(layers, input_tensor)

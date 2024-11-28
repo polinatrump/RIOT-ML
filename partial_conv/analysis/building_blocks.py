@@ -39,7 +39,7 @@ class Layer:
         output_width = (input_tensor.shape[1] + 2 * self.padding - self.dialation* (self.kernel_size - 1) - 1) // self.stride + 1
         self.output_tensor_shape = (output_height, output_width, self.output_channels)
         self.input_tensor_shape = input_tensor.shape
-        self.output_tensor_compute_freq = np.ones((output_height, output_width, self.output_channels))
+        self.output_tensor_compute_freq = np.ones((output_height, output_width, self.output_channels)) # TODO
         self._common_memory_usage = self.output_tensor_compute_freq.size + input_tensor.size
         self._memory_usage = self._common_memory_usage
         return FakeTensor(self.output_tensor_shape)
@@ -128,7 +128,7 @@ class ConvLayer(Layer):
 
         self.MAC_per_element = input_tensor.shape[2] * (self.kernel_size**2)
 
-        self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
+        # self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1 # TODO
         
         return output_tensor
     
@@ -169,7 +169,7 @@ class DepthwiseConv(Layer):
         self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
         self.MAC_per_element = (self.kernel_size**2)
 
-        self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
+        # self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1 # TODO
         
         return output_tensor
 
@@ -197,7 +197,7 @@ class PoolingLayer(Layer):
             i_w += acc_pad
         output_tensor = FakeTensor((output_height, output_width, input_tensor.shape[2]))
 
-        self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1
+        # self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1 # TODO
 
         self._memory_usage = output_tensor.size + input_tensor.size
         # self.tile_buffer_size = output_tensor.size
@@ -216,8 +216,8 @@ class FusedBlock:
         self.set_block_output_size(block_output_size)
         self.cache = cache
         self.forward = self.forward_no_cache
-        print("fusion tile size:", self.tile_size)
-        print("fusion stride:", self.stride)
+        # print("fusion tile size:", self.tile_size)
+        # print("fusion stride:", self.stride)
         # self.reset_compute_counter()
         # i = 1
         # for l in self.layers:
@@ -392,3 +392,9 @@ class Network:
                 print(f"layer {i} mem usage: {current_mem_usage} \t",
                       f"output shape: {l.aggregated_output_shape} \t size: {l.aggregated_output_size}")
         return memory_usage
+
+    def get_all_input_shapes(self):
+        shapes = []
+        for l in self.layers:
+            shapes.append(l.common_input_shape)
+        return shapes
