@@ -99,7 +99,7 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
                 modified_conv = relay.nn.conv2d(*new_args, **call.attrs)
                 return modified_conv
 
-        return self.visit(call)
+        return super().visit_call(call)
 
     
 
