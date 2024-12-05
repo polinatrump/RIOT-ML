@@ -1,20 +1,24 @@
 import heapq
 from collections import defaultdict
 
-def minimax_path(graph, start, end):
-    """
-    Finds the minimax path and its cost from start to end in a weighted graph using Dijkstra's algorithm.
+import heapq
+import math
 
-    :param graph: A dictionary where keys are nodes and values are lists of tuples (neighbor, weight).
-    :param start: The starting node.
-    :param end: The destination node.
+def minimax_path_matrix(graph, start, end):
+    """
+    Finds the minimax path and its cost from start to end in a weighted graph using an adjacency matrix.
+
+    :param graph: A 2D list (adjacency matrix) where graph[i][j] is the weight of the edge from i to j.
+                  Use float('inf') for no direct edge between i and j.
+    :param start: The starting node (index).
+    :param end: The destination node (index).
     :return: A tuple (minimax_cost, path), where minimax_cost is the minimum of the maximum edge weights,
              and path is the list of nodes in the minimax path.
     """
-    # Priority queue to store (max_edge_cost, current_node, path_to_node)
-    pq = [(0, start, [start])]
-    # Dictionary to track the minimum max_edge_cost to each node
-    min_max_cost = {start: 0}
+    n = len(graph)  # Number of nodes
+    pq = [(0, start, [start])]  # Priority queue: (max_edge_cost, current_node, path_to_node)
+    min_max_cost = [math.inf] * n  # Minimum max edge cost to each node
+    min_max_cost[start] = 0
 
     while pq:
         current_max_cost, current_node, path = heapq.heappop(pq)
@@ -24,32 +28,33 @@ def minimax_path(graph, start, end):
             return current_max_cost, path
 
         # Explore neighbors
-        for neighbor, weight in graph[current_node]:
-            # Calculate the maximum edge cost for this path
-            new_max_cost = max(current_max_cost, weight)
+        for neighbor in range(n):
+            if graph[current_node][neighbor] != math.inf:  # If there's an edge
+                weight = graph[current_node][neighbor]
+                new_max_cost = max(current_max_cost, weight)
 
-            # If the new max cost is better than the previously recorded one, update it
-            if neighbor not in min_max_cost or new_max_cost < min_max_cost[neighbor]:
-                min_max_cost[neighbor] = new_max_cost
-                heapq.heappush(pq, (new_max_cost, neighbor, path + [neighbor]))
+                # If the new max cost is better, update it
+                if new_max_cost < min_max_cost[neighbor]:
+                    min_max_cost[neighbor] = new_max_cost
+                    heapq.heappush(pq, (new_max_cost, neighbor, path + [neighbor]))
 
     # If the end node is not reachable
-    return float('inf'), []
+    return math.inf, []
 
 # Example usage:
 if __name__ == "__main__":
-    # Define the graph as an adjacency list
-    # Each edge is represented as (neighbor, weight)
-    graph = {
-        'A': [('B', 4), ('C', 2)],
-        'B': [('A', 4), ('C', 5), ('D', 10)],
-        'C': [('A', 2), ('B', 5), ('D', 8)],
-        'D': [('B', 10), ('C', 8), ('E', 6)],
-        'E': [('D', 6)]
-    }
+    # Define the graph as an adjacency matrix
+    # Use math.inf to represent no direct edge
+    graph = [
+        [0, 12, 2, math.inf, math.inf],
+        [4, 0, 5, 10, math.inf],
+        [2, 5, 0, 8, math.inf],
+        [math.inf, 10, 8, 0, 6],
+        [math.inf, math.inf, math.inf, math.inf, math.inf]
+    ]
 
-    start = 'A'
-    end = 'E'
-    minimax_cost, minimax_path = minimax_path(graph, start, end)
+    start = 0  # Node 'A' (index 0)
+    end = 4    # Node 'E' (index 4)
+    minimax_cost, minimax_path = minimax_path_matrix(graph, start, end)
     print(f"The minimax path cost from {start} to {end} is: {minimax_cost}")
     print(f"The minimax path is: {minimax_path}")
