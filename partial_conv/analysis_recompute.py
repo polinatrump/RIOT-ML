@@ -172,7 +172,7 @@ block1 = layers[0:split_idx_1]
 block2 = layers[split_idx_1:split_idx_2]
 block_remain = layers[split_idx_2:]
 # Example input tensor (adjust dimensions based on tile size)
-input_tensor = np.zeros((224, 224, 3))  # (height, width, channels)
+input_tensor = np.zeros((144, 144, 3))  # (height, width, channels)
 
 # out_block1 = fused_block1.forward_common(input_tensor)
 
@@ -204,55 +204,65 @@ print("Original Network memory usage:", ori_network_mem)
 # fusion_network_mem = fusion_network.calc_memory_usage(input_tensor)
 # print("Fusion Network memory usage:", fusion_network_mem)
 
-def find_minimal_mem_usage_fusion_depth(layers, input_tensor):
-    depth = None
-    mem_usage_lst = []
-    for i,l in enumerate(layers):
-        temp_fusion = FusedBlock(layers[0:i+1], input_tensor)
-        if temp_fusion.tile_size >= input_tensor.shape[0] or temp_fusion.tile_size >= input_tensor.shape[1]:
-            break
-        temp_fusion.forward(input_tensor)
-        mem_usage_lst.append(temp_fusion.memory_usage)
-    if len(mem_usage_lst) != 0:
-        depth = np.argmin(mem_usage_lst) + 1       
-    return depth
+# def find_minimal_mem_usage_fusion_depth(layers, input_tensor):
+#     depth = None
+#     mem_usage_lst = []
+#     for i,l in enumerate(layers):
+#         temp_fusion = FusedBlock(layers[0:i+1], input_tensor)
+#         if temp_fusion.tile_size >= input_tensor.shape[0] or temp_fusion.tile_size >= input_tensor.shape[1]:
+#             break
+#         temp_fusion.forward(input_tensor)
+#         mem_usage_lst.append(temp_fusion.memory_usage)
+#     if len(mem_usage_lst) != 0:
+#         depth = np.argmin(mem_usage_lst) + 1       
+#     return depth
 
-idx = 0
-blocks = []
-block_input_tensor = input_tensor
-fusion_range = []
-while idx < len(layers) - 1:
-    temp_layers = layers[idx:]
-    end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
-    if end_idx is not None:
-        fusion_range.append([idx, idx+end_idx-1])
-        fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
-        blocks.append(fusion_block)
-        block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
-    else:
-        end_idx = 1
-        blocks = [*blocks, *layers[idx:idx+end_idx]]
-        block_input_tensor = np.zeros(blocks[-1].common_output_shape)
-    idx += end_idx
+# idx = 0
+# blocks = []
+# block_input_tensor = input_tensor
+# fusion_range = []
+# while idx < len(layers) - 1:
+#     temp_layers = layers[idx:]
+#     end_idx = find_minimal_mem_usage_fusion_depth(temp_layers, block_input_tensor)
+#     if end_idx is not None:
+#         fusion_range.append([idx, idx+end_idx-1])
+#         fusion_block = FusedBlock(layers[idx:idx+end_idx], block_input_tensor, block_output_size=1, cache=True)
+#         blocks.append(fusion_block)
+#         block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
+#     else:
+#         end_idx = 1
+#         blocks = [*blocks, *layers[idx:idx+end_idx]]
+#         block_input_tensor = np.zeros(blocks[-1].common_output_shape)
+#     idx += end_idx
 
-origin_network = Network(layers)
-ori_network_mem = origin_network.calc_memory_usage(input_tensor)
-print("Original Network memory usage:", ori_network_mem)
+# origin_network = Network(layers)
+# ori_network_mem = origin_network.calc_memory_usage(input_tensor)
+# print("Original Network memory usage:", ori_network_mem)
 
 # from .analysis.memory_first import DPOptimizer
 # optimizer = DPOptimizer()
 # mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
 
-### Minimax path solver
-from .analysis.fusion_cost_graph import FusionCostGraphProducer, MemoryUsageEstimator
-from .analysis.minimax_memory_optimizer import minimax_path_matrix
-graph_producer = FusionCostGraphProducer(MemoryUsageEstimator)
-graph_adj_matrix = graph_producer.create_graph(layers, input_tensor)
-minimax_cost, minimax_path = minimax_path_matrix(graph_adj_matrix, 0, len(layers))
-print(f"The minimax path cost from {0} to {len(layers)} is: {minimax_cost}")
-print(f"The minimax path is: {minimax_path}")
+## Minimax path solver
+from .analysis.memory_first import MinimaxPathOptimizer
+from .analysis.utils import create_network_from
+optimizer = MinimaxPathOptimizer()
+mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
+print(f"The minimax path cost from {0} to {len(layers)} is: {mem_usage}")
+print(f"The minimax setting is: {opt_setting}")
+fusion_network = create_network_from(opt_setting, layers, input_tensor)
+fusion_network.reset_compute_counter()
+# _ = [l.set_forward_cache_horizon() for l in blocks]
+fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
+print("Fusion Network memory usage:", fusion_network_mem)
+print("fusion range:", opt_setting)
 
-## Greedy version
+# paths = all_paths_below_threshold(graph_adj_matrix, 0, len(layers), 40000)
+
+# for path, max_weight in paths:
+#     print(f"Path: {path}, Max Weight: {max_weight}")
+
+# Greedy version
 # fusion_network = Network(blocks)
 # fusion_network.reset_compute_counter()
 # # _ = [l.set_forward_cache_horizon() for l in blocks]
