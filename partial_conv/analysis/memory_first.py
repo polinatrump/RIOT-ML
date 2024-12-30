@@ -2,17 +2,12 @@ from .building_blocks import ConvLayer, DepthwiseConv, PoolingLayer, Network, La
 import math
 import numpy as np
 from .fusion_cost_graph import MemoryUsageEstimator, FusionCostGraphProducer
-from .minimax_memory_optimizer import find_minimax_path
+from .minimax_memory_optimizer import find_minimax_path, all_paths_below_threshold
+from .utils import from_path_to_fusion_setting
 
 class MinimaxPathOptimizer:
     def __init__(self) -> None:
         pass
-
-    def from_path_to_fusion_setting(self, path):
-        setting = []
-        for i in range(0, len(path) - 1):
-            setting.append((path[i], path[i+1] - 1))
-        return setting
 
     def optimize(self, layers, input_tensor):
         graph_producer = FusionCostGraphProducer(MemoryUsageEstimator)
@@ -20,9 +15,20 @@ class MinimaxPathOptimizer:
         N = len(layers)
         mem_usage, opt_path = find_minimax_path(fusion_mem_graph, 0, N)
         print(f'Layer Num: {N}, Opt Path: {opt_path}')
-        return mem_usage, self.from_path_to_fusion_setting(opt_path)
+        return mem_usage, from_path_to_fusion_setting(opt_path)
 
+# Min(MAC) subject to PeakMEM
+class MinimizeMACstPeakMEMOptimizer:
+    def __init__(self) -> None:
+        pass
 
+    def optimize(self, layers, input_tensor, peak_mem_th=50):
+        graph_producer = FusionCostGraphProducer(MemoryUsageEstimator)
+        fusion_mem_graph = graph_producer.create_graph(layers, input_tensor)
+        N = len(layers)
+        paths = all_paths_below_threshold(fusion_mem_graph, 0, N, peak_mem_th)
+        breakpoint()
+        pass
 
 class DPOptimizer:
     def __init__(self) -> None:

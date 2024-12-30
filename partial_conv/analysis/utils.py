@@ -20,3 +20,9 @@ def create_network_from(fusion_setting, layers, input_tensor):
         blocks.append(fusion_block)
         block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
     return Network(blocks)
+
+def from_path_to_fusion_setting(self, path):
+    setting = []
+    for i in range(0, len(path) - 1):
+        setting.append((path[i], path[i+1] - 1))
+    return setting

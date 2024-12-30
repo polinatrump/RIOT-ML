@@ -30,6 +30,9 @@ class Layer:
         self._common_memory_usage = None
         self._memory_usage = None
 
+        self._total_common_mac = None
+        # self._total_mac = None
+
 
     def reset_compute_counter(self):
         self.output_tensor_compute_freq[:] = 0
@@ -42,6 +45,9 @@ class Layer:
         self.output_tensor_compute_freq = np.ones((output_height, output_width, self.output_channels)) # TODO
         self._common_memory_usage = self.output_tensor_compute_freq.size + input_tensor.size
         self._memory_usage = self._common_memory_usage
+
+        self._total_common_mac = self.MAC_per_element * output_height * output_width * self.output_channels
+
         return FakeTensor(self.output_tensor_shape)
 
     
@@ -90,6 +96,10 @@ class Layer:
     @property
     def buffer_memory_usage(self):
         return self.tile_buffer_size
+
+    @property
+    def total_common_mac(self):
+        return self._total_common_mac
 
     def forward(self, input_tensor):
         return self.forward_common(input_tensor)
@@ -213,12 +223,13 @@ class PoolingLayer(Layer):
 # Define a fused block that can contain arbitrary layers
 class FusedBlock:
     def __init__(self, layers, input_tensor, block_output_size=1, cache=False):
-        self.layers = layers
+        self.layers : list(Layer) = layers
         self.tile_size = None
         self.stride = None
         self.set_block_output_size(block_output_size)
         self.cache = cache
         self.forward = self.forward_no_cache
+        self._current_input_tensor = None
         # print("fusion tile size:", self.tile_size)
         # print("fusion stride:", self.stride)
         # self.reset_compute_counter()
@@ -251,6 +262,36 @@ class FusedBlock:
             # print("layer peak usage:", layer_mem_max, [l.memory_usage for l in self.layers])
             # print("layer peak usage:", layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size)
             return layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size
+        
+
+    @property
+    def total_common_mac(self):
+        return reduce(lambda x,y: x+y, [l.total_common_mac for l in self.layers])
+
+    @property
+    def total_fusion_mac(self):
+        tile_size = self.tile_size
+        tile_stride = self.stride
+
+        total_mac = 0
+
+        for l in self.layers:
+            input_shape = l.common_input_shape
+
+            outer_out_h = (input_shape[0] - tile_size) // tile_stride + 1
+            outer_out_w = (input_shape[1] - l.kernel_size) // l.stride + 1
+
+            inner_out_h = (tile_size[0] - l.kernel_size) // l.stride + 1
+            inner_out_w = 1
+
+            out_ch = l.output_channels
+
+            total_mac += outer_out_h * outer_out_w * inner_out_h * inner_out_w * out_ch * l.MAC_per_element
+
+            tile_size = (tile_size - l.kernel_size) // l.stride + 1
+            tile_stride = tile_stride // l.stride
+
+        return total_mac
     
     @property
     def aggregated_output_shape(self):
@@ -275,6 +316,8 @@ class FusedBlock:
         if stride is None:
             stride = self.stride
         
+        # self._current_input_tensor = input_tensor
+
         height, width, _ = input_tensor.shape
         for i in range(0, height - tile_size + 1, stride):
             for j in range(0, width - tile_size + 1, stride):

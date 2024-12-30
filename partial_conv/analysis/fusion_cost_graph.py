@@ -6,6 +6,8 @@ import copy
 
 class FusionCostEstimator:
     def __init__(self, network_layers, input_tensor) -> None:
+        self.layers = network_layers
+        self.input_tensor = input_tensor
         self._cost = {}
         pass
 
@@ -20,13 +22,39 @@ class FusionCostEstimator:
 class MACEstimator(FusionCostEstimator):
     def __init__(self, network_layers, input_tensor) -> None:
         super().__init__(network_layers, input_tensor)
-    pass
+        self._analysis()
+
+    def _get_fusion_mac(self, m, n):
+        funsion_mac = math.inf
+
+        if m >= len(self.layers):
+            return math.inf
+        if m == n:
+            funsion_mac =  self.layers[m].total_common_mac
+        else:
+            block_input_tensor = np.zeros(self.common_input_shapes[m])
+            block = FusedBlock(self.layers[m:n+1], block_input_tensor, 1, True) # DONE calc mem usage of fusion with cache
+            if block.tile_size > block_input_tensor.shape[0] or block.tile_size > block_input_tensor.shape[1]:
+                return math.inf
+            block.forward(block_input_tensor)
+            funsion_mac =  block.total_fusion_mac
+
+
+        return funsion_mac
+        
+    def _analysis(self):
+        network = Network(self.layers)
+        network.forward(self.input_tensor)
+        self.common_input_shapes = network.get_all_input_shapes()
+
+        for i in range(0, len(self.layers)):
+            for j in range(i, len(self.layers)):
+                # mem usage of Fusion block containing layers {L_i,...,L_j}
+                self._cost[i, j] = self._get_fusion_mac(i, j)
 
 class MemoryUsageEstimator(FusionCostEstimator):
     def __init__(self, network_layers, input_tensor) -> None:
         super().__init__(network_layers, input_tensor)
-        self.layers = network_layers
-        self.input_tensor = input_tensor
         self._analysis()
 
     def _get_fusion_memory_usage(self, m, n):
