@@ -54,38 +54,41 @@ poc_layers = [
 
 
 def MBConv(intput_channel, output_channel, expansion=1, stride=1, padding=1, kernel_size=3):
+    intput_channel = int(intput_channel)
+    output_channel = int(output_channel)
     return [
         ConvLayer(output_channels=intput_channel * expansion, kernel_size=1, stride=1),
         DepthwiseConv(output_channels=intput_channel * expansion, kernel_size=kernel_size, stride=stride, padding=padding),
         ConvLayer(output_channels=output_channel, kernel_size=1, stride=1),
     ]
 
+w = .35
 mobilenetv2_layers = [
-    ConvLayer(output_channels=32, kernel_size=3, stride=2, padding=1),
-    *MBConv(32, 16, 1, 1),
+    ConvLayer(output_channels=int(32*w), kernel_size=3, stride=2, padding=1),
+    *MBConv(32*w, 16*w, 1, 1),
    
-    *MBConv(16, 24, 6, 2),
-    *MBConv(24, 24, 6, 1),
+    *MBConv(16*w, 24*w, 6, 2),
+    *MBConv(24*w, 24*w, 6, 1),
 
-    *MBConv(24, 32, 6, 2),
-    *MBConv(32, 32, 6, 1),
-    *MBConv(32, 32, 6, 1),
+    *MBConv(24*w, 32*w, 6, 2),
+    *MBConv(32*w, 32*w, 6, 1),
+    *MBConv(32*w, 32*w, 6, 1),
 
-    *MBConv(32, 64, 6, 2),
-    *MBConv(64, 64, 6, 1),
-    *MBConv(64, 64, 6, 1),
-    *MBConv(64, 64, 6, 1),
+    *MBConv(32*w, 64*w, 6, 2),
+    *MBConv(64*w, 64*w, 6, 1),
+    *MBConv(64*w, 64*w, 6, 1),
+    *MBConv(64*w, 64*w, 6, 1),
 
-    *MBConv(64, 96, 6, 1),
-    *MBConv(96, 96, 6, 1),
-    *MBConv(96, 96, 6, 1),
+    *MBConv(64*w, 96*w, 6, 1),
+    *MBConv(96*w, 96*w, 6, 1),
+    *MBConv(96*w, 96*w, 6, 1),
 
-    *MBConv(96, 160, 6, 2),
-    *MBConv(160, 160, 6, 1),
-    *MBConv(160, 160, 6, 1),
+    *MBConv(96*w, 160*w, 6, 2),
+    *MBConv(160*w, 160*w, 6, 1),
+    *MBConv(160*w, 160*w, 6, 1),
 
-    *MBConv(160, 320, 6, 1),
-    ConvLayer(output_channels=1280, kernel_size=1, stride=1),
+    *MBConv(160*w, 320*w, 6, 1),
+    ConvLayer(output_channels=int(1280*w), kernel_size=1, stride=1),
     # PoolingLayer(pool_size=7, stride=1),
 ]
 
@@ -172,7 +175,7 @@ block1 = layers[0:split_idx_1]
 block2 = layers[split_idx_1:split_idx_2]
 block_remain = layers[split_idx_2:]
 # Example input tensor (adjust dimensions based on tile size)
-input_tensor = np.zeros((144, 144, 3))  # (height, width, channels)
+input_tensor = np.zeros((224, 224, 3))  # (height, width, channels)
 
 # out_block1 = fused_block1.forward_common(input_tensor)
 
@@ -196,7 +199,7 @@ input_tensor = np.zeros((144, 144, 3))  # (height, width, channels)
 origin_network = Network(layers)
 ori_network_mem = origin_network.calc_memory_usage(input_tensor)
 print("Original Network memory usage:", ori_network_mem)
-
+print("width multiplier:", w)
 # fused_block1 = FusedBlock(block1, input_tensor, 1)
 # fused_block2 = FusedBlock(block2, fused_block1.aggregated_output_shape, 1)
 

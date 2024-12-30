@@ -124,7 +124,8 @@ class ConvLayer(Layer):
         self._memory_usage = output_tensor.size + input_tensor.size
         
         # self.tile_buffer_size = output_tensor.size
-        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[2] # Tile Buffer
+        # self.tile_buffer_size = self.kernel_size * self.input_tensor_shape[0] * input_tensor.shape[2] # Full-H-Buffer
 
         self.MAC_per_element = input_tensor.shape[2] * (self.kernel_size**2)
 
@@ -166,7 +167,8 @@ class DepthwiseConv(Layer):
             self._memory_usage = output_tensor.size + input_tensor.size
 
         # self.tile_buffer_size = output_tensor.size
-        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[2]
+        # self.tile_buffer_size = self.kernel_size * self.input_tensor_shape[0] * input_tensor.shape[2] # Full-H-Buffer
         self.MAC_per_element = (self.kernel_size**2)
 
         # self.output_tensor_compute_freq[i_h:i_h + output_height, i_w:i_w + output_width, :] += 1 # TODO
@@ -201,7 +203,8 @@ class PoolingLayer(Layer):
 
         self._memory_usage = output_tensor.size + input_tensor.size
         # self.tile_buffer_size = output_tensor.size
-        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[1]
+        self.tile_buffer_size = self.kernel_size * input_tensor.shape[0] * input_tensor.shape[2]
+        # self.tile_buffer_size = self.kernel_size * self.input_tensor_shape[0] * input_tensor.shape[2] # Full-H-Buffer
 
         self.MAC_per_element = (self.kernel_size**2)
 
@@ -240,13 +243,13 @@ class FusedBlock:
         buffer_sum = reduce(lambda x,y: x+y, [l.buffer_memory_usage for l in self.layers])
         # TODO: mem usage with cache is not correct for some case?
         if self.cache:
-            print("cache buffer usage:", buffer_sum)
+            # print("cache buffer usage:", buffer_sum)
             return buffer_sum + self.layers[0].common_input_size + self.layers[-1].common_output_size
 
         else:
-            layer_mem_max =max([l.memory_usage for l in self.layers])
+            layer_mem_max = max([l.memory_usage for l in self.layers])
             # print("layer peak usage:", layer_mem_max, [l.memory_usage for l in self.layers])
-            print("layer peak usage:", layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size)
+            # print("layer peak usage:", layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size)
             return layer_mem_max + self.layers[0].common_input_size + self.layers[-1].common_output_size
     
     @property

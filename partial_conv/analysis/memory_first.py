@@ -19,6 +19,7 @@ class MinimaxPathOptimizer:
         fusion_mem_graph = graph_producer.create_graph(layers, input_tensor)
         N = len(layers)
         mem_usage, opt_path = find_minimax_path(fusion_mem_graph, 0, N)
+        print(f'Layer Num: {N}, Opt Path: {opt_path}')
         return mem_usage, self.from_path_to_fusion_setting(opt_path)
 
 

@@ -43,7 +43,7 @@ class MemoryUsageEstimator(FusionCostEstimator):
         else:
             block_input_tensor = np.zeros(self.common_input_shapes[m])
             input_tensor_size = block_input_tensor.size
-            block = FusedBlock(self.layers[m:n+1], block_input_tensor, 1, False) # TODO calc mem usage of fusion with cache
+            block = FusedBlock(self.layers[m:n+1], block_input_tensor, 1, True) # DONE calc mem usage of fusion with cache
             if block.tile_size > block_input_tensor.shape[0] or block.tile_size > block_input_tensor.shape[1]:
                 return math.inf
             block.forward(block_input_tensor)
@@ -53,7 +53,7 @@ class MemoryUsageEstimator(FusionCostEstimator):
 
         if m == 0:
             memory_usage -= input_tensor_size
-            print(memory_usage, output_shape, self.common_input_shapes[m])
+            # print(memory_usage, output_shape, self.common_input_shapes[m])
         
         if n == len(self.layers) - 1:
             memory_usage -= output_tensor_size
