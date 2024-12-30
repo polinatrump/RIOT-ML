@@ -19,7 +19,7 @@ class IterativeGlobalAvgPool:
     def __call__(self, prev_output, input_elem):
         return relay.Call(self.func, [prev_output, input_elem])
 
-def iterative_global_avg_pool_step(input_elem, prev_output, dividend):
+def iterative_global_avg_pool_step(input_elem, prev_output, dividend, dtype="float32"):
     """
     Iteratively computes one step of the global average pooling operation.
     
@@ -31,7 +31,7 @@ def iterative_global_avg_pool_step(input_elem, prev_output, dividend):
     - The updated cumulative sum after the current step.
     """
 
-    divided_input = relay.divide(input_elem, relay.const(dividend, dtype="float32"))
+    divided_input = relay.divide(input_elem, relay.const(dividend, dtype=dtype))
     # Add the current element to the cumulative sum
     new_output = relay.add(prev_output, divided_input)
     

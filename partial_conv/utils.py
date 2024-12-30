@@ -40,7 +40,7 @@ class CollectOpShapeInfo(relay.ExprVisitor):
         if op.op.name == 'nn.conv2d' and not self.first_conv_set:
             op_info_['first_conv'] = True
             self.first_conv_set = True
-        if op.op.name == 'nn.conv2d':
+        if op.op.name == 'nn.conv2d' or op.op.name == 'nn.avg_pool2d':
             op_info_['conv_index'] = self.cur_conv_index
             self.cur_conv_index += 1
         self.op_info.append(op_info_)

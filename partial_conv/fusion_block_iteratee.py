@@ -10,6 +10,8 @@ from .dyn_slice_fixed_size import dyn_slice_fixed_size
 from .op.copy_inplace import copy_in_place_spatial
 from .utils import CollectOpShapeInfo, ReWriteInputsShape, ReWriteSwapVars, InferCallNodeType, EliminateIterateeDummyCallNode
 
+from .iterative_ops import iterative_global_avg_pool_step
+
 import copy
 
 def copy_var_with_name_prefix(var, prefix='_'):
@@ -112,7 +114,7 @@ def create_fusion_block_iteratee(layers_node, block_output_size=1, global_symbol
     return iteratee_func, new_input_layout, new_input_stride, output_shape
 
 from .op.cache_conv_input import cache_conv_input
-class InsertConvInputCache(relay.ExprMutator):
+class InsertConvInputCacheAndIterPool(relay.ExprMutator):
     def __init__(self, op_to_info_map):
         super().__init__()
         self.op_to_info_map = op_to_info_map  # The new input expression to replace the original input
@@ -154,9 +156,65 @@ class InsertConvInputCache(relay.ExprMutator):
             modified_conv = relay.nn.conv2d(cache_out, *call.args[1:], **attrs)
             
             return modified_conv
+        
+        elif call.op.name == "nn.avg_pool2d":
+            # Replace the input of the `conv2d` with `self.new_input`
+            op_info = self.op_to_info_map[call]
+            input_shape = op_info['input_shape']
+            input_tile_size = op_info['input_tile_size']
+            kernel_size = op_info['kernel_size']
+            strides = op_info['strides']
+            padding = op_info['padding']
+
+            out_shape = op_info['output_shape']
+            out_hw = out_shape[2:]
+            out_ch = out_shape[1]
+
+            if out_hw == (1, 1): #global pooling
+                print("insert iterative avg_pool:", op_info)
+                avg_input = new_args[0]
+                cache_prev_output = relay.var("cache_prev_gp_output", shape=out_shape, dtype=call.checked_type.dtype) # gp: global pooling
+                output = iterative_global_avg_pool_step(avg_input, cache_prev_output, input_shape[-2] * input_shape[-1], call.checked_type.dtype)    
+                return output
 
         # For other operations, continue visiting as usual
-        return self.visit(call)
+        return super().visit_call(call)
+
+# class IterizeGlobalPooling(relay.ExprMutator):
+#     def __init__(self, op_to_info_map):
+#         super().__init__()
+#         self.op_to_info_map = op_to_info_map  # The new input expression to replace the original input
+
+#     def visit_call(self, call):
+#         new_args = []
+#         for arg in call.args:
+#             new_args.append(self.visit(arg))
+        
+#         # Check if the call node is a `conv2d` operation
+#         if call.op.name == "nn.avg_pool2d":
+#             # Replace the input of the `conv2d` with `self.new_input`
+#             op_info = self.op_to_info_map[call]
+#             input_shape = op_info['input_shape']
+#             input_tile_size = op_info['input_tile_size']
+#             kernel_size = op_info['kernel_size']
+#             strides = op_info['strides']
+#             padding = op_info['padding']
+
+#             out_shape = op_info['output_shape']
+#             out_hw = out_shape[2:]
+#             out_ch = out_shape[1]
+
+#             if out_hw == (1, 1): #global pooling
+#                 print("insert iterative avg_pool:", op_info)
+#                 avg_input = new_args[0]
+#                 cache_prev_output = relay.var("cache_prev_gp_output", shape=out_shape, dtype=call.checked_type.dtype) # gp: global pooling
+#                 output = iterative_global_avg_pool_step(avg_input, cache_prev_output, input_shape[-2] * input_shape[-1])    
+#                 return output
+
+#         # For other operations, continue visiting as usual
+#         return super().visit_call(call)
+
+    
 
 def create_fusion_block_iteratee_with_cache(layers_node, block_output_size=1, global_symbol="iteratee"):
     iteratee_func = None
@@ -181,7 +239,7 @@ def create_fusion_block_iteratee_with_cache(layers_node, block_output_size=1, gl
 
     output_shape = conv_chain_node.checked_type.shape
 
-    conv_chain_block = InsertConvInputCache(op_to_info_map).visit(conv_chain_node)
+    conv_chain_block = InsertConvInputCacheAndIterPool(op_to_info_map).visit(conv_chain_node)
 
     conv_chain_block = InferCallNodeType().visit(conv_chain_block)
 

@@ -63,8 +63,6 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
                     is_fusion_end = True
                     break
             if is_fusion_begin:
-                
-
                 dummy_input_var = relay.var(f"dummy_input_{conv_idx}", shape=input_shape, dtype=call.args[0].checked_type.dtype)
                 self.swap_var_to_node_input_arg_map[dummy_input_var] = new_args[0]
                 self.cur_dummy_input_var = dummy_input_var
@@ -74,6 +72,7 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
             
             elif is_fusion_end:
                 new_normal_conv = relay.nn.conv2d(*new_args, **call.attrs)
+                print("end conv_idx:", conv_idx)
                 iteratee_func, conv_chain_params, cache_vars, \
                 new_input_layout, new_input_stride, \
                 output_shape, input_shape = create_fusion_block_iteratee_with_cache(new_normal_conv, 1, f'iteratee_{conv_idx}')
@@ -97,6 +96,48 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
             
             else:
                 modified_conv = relay.nn.conv2d(*new_args, **call.attrs)
+                return modified_conv
+            
+        elif call.op.name == "nn.avg_pool2d":
+            op_info = self.op_to_info_map[call]
+            conv_idx = op_info['conv_index']
+            input_shape = op_info['input_shape']
+            is_fusion_begin = False
+            is_fusion_end = False
+
+            for indices in self.fusion_indices:
+                if indices[0] == conv_idx:
+                    is_fusion_begin = True
+                    break
+                if indices[1] == conv_idx:
+                    is_fusion_end = True
+                    break
+
+            if is_fusion_end:
+                new_normal_conv = relay.nn.avg_pool2d(*new_args, **call.attrs)
+                iteratee_func, conv_chain_params, cache_vars, \
+                new_input_layout, new_input_stride, \
+                output_shape, input_shape = create_fusion_block_iteratee_with_cache(new_normal_conv, 1, f'iteratee_{conv_idx}')
+                # breakpoint()
+                in_w = input_shape[2]
+                in_h = input_shape[3]
+                iter_begin = [0,0,0,0]
+                iter_end = [0, 0, in_w - new_input_layout[0] + 1, in_h - new_input_layout[1] + 1]
+                iter_strides = [1,1, *new_input_stride]
+
+                iter_worker = fusion_iter_worker(iter_begin, iter_end, iter_strides, output_shape,
+                                     conv_chain_params, iteratee_func, cache_vars=cache_vars)
+                
+                name_to_var = {self.cur_dummy_input_var.name_hint: self.swap_var_to_node_input_arg_map[self.cur_dummy_input_var]}
+
+                iter_worker = ReWriteSwapVars(name_to_var).visit(iter_worker)
+
+                # breakpoint()
+
+                return iter_worker
+            
+            else:
+                modified_conv = relay.nn.avg_pool2d(*new_args, **call.attrs)
                 return modified_conv
 
         return super().visit_call(call)
