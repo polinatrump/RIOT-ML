@@ -16,12 +16,16 @@ def create_network_from(fusion_setting, layers, input_tensor):
     block_input_tensor = input_tensor
     blocks = []
     for s in fusion_setting:
-        fusion_block = FusedBlock(layers[s[0]:s[1]+1], block_input_tensor, block_output_size=1, cache=True)
-        blocks.append(fusion_block)
-        block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
+        if s[0] == s[1]:
+            blocks.append(layers[s[0]])
+            block_input_tensor = np.zeros(layers[s[0]].common_output_shape)
+        else:
+            fusion_block = FusedBlock(layers[s[0]:s[1]+1], block_input_tensor, block_output_size=1, cache=True)
+            blocks.append(fusion_block)
+            block_input_tensor = np.zeros(fusion_block.aggregated_output_shape)
     return Network(blocks)
 
-def from_path_to_fusion_setting(self, path):
+def from_path_to_fusion_setting(path):
     setting = []
     for i in range(0, len(path) - 1):
         setting.append((path[i], path[i+1] - 1))

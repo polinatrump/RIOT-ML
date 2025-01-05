@@ -4,6 +4,56 @@ from collections import defaultdict
 import heapq
 import math
 
+
+def find_shortest_path(graph, start, end):
+    """
+    Finds the shortest path from start to end in a weighted graph using Dijkstra's algorithm.
+
+    :param graph: A 2D list (adjacency matrix) where graph[i][j] is the weight of the edge from i to j.
+                  Use float('inf') for no direct edge between i and j.
+    :param start: The starting node (index).
+    :param end: The destination node (index).
+    :return: A tuple (total_distance, shortest_path) where shortest_path is a list of nodes representing the path,
+             and total_distance is the total weight of the path.
+    """
+    n = len(graph)  # Number of nodes
+    distances = [float('inf')] * n  # Distance from start to each node
+    distances[start] = 0
+    prev_nodes = [None] * n  # To reconstruct the shortest path
+    pq = [(0, start)]  # Priority queue: (current_distance, current_node)
+
+    while pq:
+        current_distance, current_node = heapq.heappop(pq)
+        # print(f"cur_node: {current_node}, cur_dist: {current_distance}")
+
+        # If the current node is the end node, stop early
+        if current_node == end:
+            break
+
+        # Explore neighbors
+        for neighbor in range(n):
+            weight = graph[current_node][neighbor]
+            if weight != float('inf'):  # Check if there is an edge
+                distance = current_distance + weight
+                if distance < distances[neighbor]:  # Relax the edge
+                    distances[neighbor] = distance
+                    prev_nodes[neighbor] = current_node
+                    heapq.heappush(pq, (distance, neighbor))
+                    # print(f"[Insert] node: {neighbor}, dist: {distance}")
+
+    # Reconstruct the shortest path
+    path = []
+    current = end
+    while current is not None:
+        path.append(current)
+        current = prev_nodes[current]
+    path.reverse()
+    
+    if distances[end] == math.inf:
+        path = []
+
+    return distances[end], path
+
 def find_minimax_path(graph, start, end):
     """
     Finds the minimax path and its cost from start to end in a weighted graph using an adjacency matrix.
@@ -41,7 +91,51 @@ def find_minimax_path(graph, start, end):
     # If the end node is not reachable
     return math.inf, []
 
-def all_paths_below_threshold(graph, start, end, threshold):
+def sum_find_all_paths_below_threshold(graph, start, end, threshold):
+    """
+    Finds all paths from start to end in a weighted graph where the sum of edge weights is below a threshold.
+
+    :param graph: A 2D list (adjacency matrix) where graph[i][j] is the weight of the edge from i to j.
+                  Use float('inf') for no direct edge between i and j.
+    :param start: The starting node (index).
+    :param end: The destination node (index).
+    :param threshold: The maximum allowed sum of edge weights for any path.
+    :return: A list of tuples, each tuple containing a path (list of nodes) and its total weight.
+    """
+    n = len(graph)  # Number of nodes
+    all_paths = []
+
+    # Stack for DFS: (current_node, current_weight, path_indices)
+    stack = [(start, 0, [])]
+
+    while stack:
+        current_node, current_weight, path_indices = stack.pop()
+
+        # Prune paths that exceed the threshold
+        if current_weight > threshold:
+            continue
+
+        # Append the current node to the path
+        path_indices.append(current_node)
+
+        # If we reach the destination, save the path and its weight
+        if current_node == end:
+            all_paths.append((path_indices[:], current_weight))  # Use a slice to copy the path
+            path_indices.pop()  # Backtrack
+            continue
+
+        # Explore neighbors
+        for neighbor in range(n):
+            weight = graph[current_node][neighbor]
+            if weight != float('inf') and neighbor not in path_indices:  # Avoid revisiting nodes
+                stack.append((neighbor, current_weight + weight, path_indices[:]))
+
+        # Backtrack by removing the current node
+        path_indices.pop()
+
+    return all_paths
+
+def minimax_all_paths_below_threshold(graph, start, end, threshold):
     """
     Finds all paths from start to end in a weighted graph where the maximum edge weight is below a specified threshold.
 

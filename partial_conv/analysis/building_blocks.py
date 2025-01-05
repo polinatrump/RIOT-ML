@@ -223,7 +223,7 @@ class PoolingLayer(Layer):
 # Define a fused block that can contain arbitrary layers
 class FusedBlock:
     def __init__(self, layers, input_tensor, block_output_size=1, cache=False):
-        self.layers : list(Layer) = layers
+        self.layers : list[Layer] = layers
         self.tile_size = None
         self.stride = None
         self.set_block_output_size(block_output_size)
@@ -272,21 +272,24 @@ class FusedBlock:
     def total_fusion_mac(self):
         tile_size = self.tile_size
         tile_stride = self.stride
-
+        
         total_mac = 0
 
         for l in self.layers:
             input_shape = l.common_input_shape
+            # print(f"total_fusion_mac: common_input_shape {input_shape}")
+            # print(f"total_fusion_mac: tile size {tile_size}, tile stride {tile_stride}")
 
-            outer_out_h = (input_shape[0] - tile_size) // tile_stride + 1
-            outer_out_w = (input_shape[1] - l.kernel_size) // l.stride + 1
+            outer_out_h = (input_shape[0] + 2 * l.padding - tile_size) // tile_stride + 1
+            outer_out_w = (input_shape[1] + 2 * l.padding - l.kernel_size) // l.stride + 1
 
-            inner_out_h = (tile_size[0] - l.kernel_size) // l.stride + 1
+            inner_out_h = (tile_size - l.kernel_size) // l.stride + 1
             inner_out_w = 1
 
             out_ch = l.output_channels
 
             total_mac += outer_out_h * outer_out_w * inner_out_h * inner_out_w * out_ch * l.MAC_per_element
+            # print(f"{outer_out_h} {outer_out_w} {inner_out_h} {inner_out_w} {out_ch} {l.MAC_per_element}")
 
             tile_size = (tile_size - l.kernel_size) // l.stride + 1
             tile_stride = tile_stride // l.stride
@@ -444,3 +447,25 @@ class Network:
         for l in self.layers:
             shapes.append(l.common_input_shape)
         return shapes
+    
+    @property
+    def total_mac(self):
+        _total_mac = 0
+        for i,l in enumerate(self.layers):
+            if isinstance(l, Layer):
+                _total_mac += l.total_common_mac
+            elif isinstance(l, FusedBlock):
+                _total_mac += l.total_fusion_mac
+            else:
+                raise RuntimeError
+        return _total_mac
+    
+    @property
+    def total_common_mac(self):
+        _total_mac = 0
+        for i,l in enumerate(self.layers):
+            if isinstance(l, Layer) or isinstance(l, FusedBlock):
+                _total_mac += l.total_common_mac
+            else:
+                raise RuntimeError
+        return _total_mac

@@ -50,6 +50,7 @@ class MACEstimator(FusionCostEstimator):
         for i in range(0, len(self.layers)):
             for j in range(i, len(self.layers)):
                 # mem usage of Fusion block containing layers {L_i,...,L_j}
+                # print(f"Get Fusion Cost of {i}, {j}")
                 self._cost[i, j] = self._get_fusion_mac(i, j)
 
 class MemoryUsageEstimator(FusionCostEstimator):

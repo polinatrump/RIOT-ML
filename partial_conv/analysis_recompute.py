@@ -247,18 +247,57 @@ print("width multiplier:", w)
 # mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
 
 ## Minimax path solver
-from .analysis.memory_first import MinimaxPathOptimizer
+# from .analysis.memory_first import MinimaxPathOptimizer
+# from .analysis.utils import create_network_from
+# optimizer = MinimaxPathOptimizer()
+# mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
+# print(f"The minimax path cost from {0} to {len(layers)} is: {mem_usage}")
+# print(f"The minimax setting is: {opt_setting}")
+# fusion_network = create_network_from(opt_setting, layers, input_tensor)
+# fusion_network.reset_compute_counter()
+# # _ = [l.set_forward_cache_horizon() for l in blocks]
+# fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
+# print("Fusion Network memory usage:", fusion_network_mem)
+# print("fusion range:", opt_setting)
+
+# Minimaize MAC s.t. Peak MEM Optimizer
+# from .analysis.memory_first import MinimizeMACstPeakMEMOptimizer
+# from .analysis.utils import create_network_from
+# import math
+# optimizer = MinimizeMACstPeakMEMOptimizer()
+# PEAK_MEM_TH = math.inf
+# mac_usage, opt_setting = optimizer.optimize(layers, input_tensor, PEAK_MEM_TH)
+# print(f"The minimal mac s.t. {PEAK_MEM_TH} from {0} to {len(layers)} is: {mac_usage}")
+# print(f"The optimal setting is: {opt_setting}")
+# fusion_network = create_network_from(opt_setting, layers, input_tensor)
+# fusion_network.reset_compute_counter()
+# # _ = [l.set_forward_cache_horizon() for l in blocks]
+# fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
+# print("Fusion Network memory usage:", fusion_network_mem)
+# print("fusion range:", opt_setting)
+
+## Minimize PEAK MEM s.t. MAC Overhead factor
+from .analysis.memory_first import MinimizePeakMEMstMOFOptimizer
 from .analysis.utils import create_network_from
-optimizer = MinimaxPathOptimizer()
-mem_usage, opt_setting = optimizer.optimize(layers, input_tensor)
-print(f"The minimax path cost from {0} to {len(layers)} is: {mem_usage}")
-print(f"The minimax setting is: {opt_setting}")
+import math
+optimizer = MinimizePeakMEMstMOFOptimizer()
+MAC_OVERHEAD_FAC = 1.5
+mem_usage, opt_setting = optimizer.optimize(layers, input_tensor, MAC_OVERHEAD_FAC)
+print(f"The minimal Peak MEM s.t. MAC Overhead {MAC_OVERHEAD_FAC} from {0} to {len(layers)} is: {mem_usage}")
+print(f"The optimal setting is: {opt_setting}")
 fusion_network = create_network_from(opt_setting, layers, input_tensor)
 fusion_network.reset_compute_counter()
-# _ = [l.set_forward_cache_horizon() for l in blocks]
 fusion_network_mem = fusion_network.calc_memory_usage(input_tensor, ignore_output=True)
 print("Fusion Network memory usage:", fusion_network_mem)
 print("fusion range:", opt_setting)
+
+fusion_mac = fusion_network.total_mac
+common_mac = fusion_network.total_common_mac
+redudant_compute = fusion_mac - common_mac
+print(f'total:{fusion_mac}, common: {common_mac}, redudant:{redudant_compute}, redudant rate: {redudant_compute / fusion_mac}, overhead factor: {fusion_mac / common_mac}')
+
+
+
 
 # paths = all_paths_below_threshold(graph_adj_matrix, 0, len(layers), 40000)
 
@@ -306,17 +345,17 @@ print("fusion range:", opt_setting)
 # print("sum memory usage:", fused_block.get_sum_mem())
 
 # 
-compute_total = 0
-common_compute = 0
+# compute_total = 0
+# common_compute = 0
 
-for layer in layers:
-    compute_total += np.sum(layer.output_tensor_compute_freq) * layer.MAC_per_element
-    common_compute += layer.output_tensor_compute_freq.size * layer.MAC_per_element
+# for layer in layers:
+#     compute_total += np.sum(layer.output_tensor_compute_freq) * layer.MAC_per_element
+#     common_compute += layer.output_tensor_compute_freq.size * layer.MAC_per_element
 
 # common_compute = len(recomp_MAC)
-redudant_compute = compute_total - common_compute
+# redudant_compute = compute_total - common_compute
 
-print(f'total:{compute_total}, common: {common_compute}, redudant:{redudant_compute}, redudant rate: {redudant_compute / compute_total}, overhead factor: {compute_total / common_compute}')
+# print(f'total:{compute_total}, common: {common_compute}, redudant:{redudant_compute}, redudant rate: {redudant_compute / compute_total}, overhead factor: {compute_total / common_compute}')
 
 # Visualize re-computation frequencies
 # visualize_recomp_freq(layers)
