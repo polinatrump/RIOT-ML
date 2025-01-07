@@ -64,7 +64,7 @@ class MinimizePeakMEMstMOFOptimizer:
         while True:
             fusion_mac, p = find_shortest_path(fusion_mac_graph, 0, N)
 
-            if fusion_mac <= maximum_mac and cur_peak_mem < min_mem:
+            if fusion_mac <= maximum_mac and cur_peak_mem < min_mem and p is not []:
                 opt_path = p
                 min_mem = cur_peak_mem
                 cur_mac = fusion_mac

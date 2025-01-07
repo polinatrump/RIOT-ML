@@ -430,7 +430,7 @@ class Network:
             if i == 0 and ignore_input:
                 current_mem_usage -= input_tensor.size
             elif i == len(self.layers) - 1 and ignore_output:
-                current_mem_usage -= l.aggregated_output_size
+                current_mem_usage -= l.aggregated_output_size if isinstance(l, FusedBlock) else l.common_output_size
             memory_usage = max(memory_usage, current_mem_usage)          
             
             if isinstance(l, Layer):

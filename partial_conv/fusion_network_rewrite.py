@@ -56,6 +56,8 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
             is_fusion_end = False
 
             for indices in self.fusion_indices:
+                if indices[0] == conv_idx and indices[1] == conv_idx:
+                    break
                 if indices[0] == conv_idx:
                     is_fusion_begin = True
                     break
@@ -106,6 +108,8 @@ class MultiStageFusionNetworkRewriter(relay.ExprMutator):
             is_fusion_end = False
 
             for indices in self.fusion_indices:
+                if indices[0] == conv_idx and indices[1] == conv_idx:
+                    break
                 if indices[0] == conv_idx:
                     is_fusion_begin = True
                     break
