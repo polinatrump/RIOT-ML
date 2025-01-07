@@ -185,15 +185,35 @@ def depthwise_conv2d_nchw(Input, Filter, stride, padding, dilation, out_dtype=No
     idxmod = tvm.tir.indexmod
     di = te.reduce_axis((0, filter_height), name="di")
     dj = te.reduce_axis((0, filter_width), name="dj")
+    # Output = te.compute(
+    #     (batch, out_channel, out_height, out_width),
+    #     lambda b, c, i, j: te.sum(
+    #         (
+    #             PaddedInput[
+    #                 b,
+    #                 idxdiv(c, channel_multiplier),
+    #                 i * stride_h + di * dilation_h,
+    #                 j * stride_w + dj * dilation_w,
+    #             ].astype(out_dtype)
+    #             * Filter[
+    #                 idxdiv(c, channel_multiplier), idxmod(c, channel_multiplier), di, dj
+    #             ].astype(out_dtype)
+    #         ),
+    #         axis=[di, dj],
+    #     ),
+    #     name="DepthwiseConv2d",
+    #     tag="depthwise_conv2d_nchw",
+    # )
+    # TODO: MUST FIX, CURRENT WALKAROUND PADDING, ONLY FOR PERFORMANCE BENCHMARK
     Output = te.compute(
         (batch, out_channel, out_height, out_width),
         lambda b, c, i, j: te.sum(
             (
-                PaddedInput[
+                Input[
                     b,
                     idxdiv(c, channel_multiplier),
-                    i * stride_h + di * dilation_h,
-                    j * stride_w + dj * dilation_w,
+                    (i * stride_h + di * dilation_h) % in_height ,
+                    (j * stride_w + dj * dilation_w) % in_width,
                 ].astype(out_dtype)
                 * Filter[
                     idxdiv(c, channel_multiplier), idxmod(c, channel_multiplier), di, dj
