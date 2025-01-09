@@ -73,7 +73,7 @@ If the build fails, refer to **section 2 Troubleshooting Errors During TVM Build
 ```
 2. Set the required environment variables:
 ```
-(my-test-env)~/tvm/build$ export TVM_HOME=/home/polina/TinyChirpDemo/tvm
+(my-test-env)~/tvm/build$ export TVM_HOME={path-to-tvm-base-dir}
 (my-test-env)~/tvm/build$ export PYTHONPATH=$TVM_HOME/python:$PYTHONPATH
 ```
 3. Install RIOT-ML tools and dependencies (you can also follow [official docs](https://doc.riot-os.org/getting-started.html#compiling-riot)):
@@ -122,9 +122,9 @@ sudo apt-get install librust-backtrace libbacktrace-dev
 
 Solution:
 ```
-pip install -e /home/polina/TinyChirp/tvm/python
+pip install -e {path-to-tvm}/python
 ```
-#### Error: OSError: /home/polina/miniconda3/envs/test/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.30' not found (required by /home/polina/TinyChirp/tvm/build/libtvm.so)
+#### Error: OSError: {path-to-miniconda3}/envs/test/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.30' not found (required by {path-to-tvm}/build/libtvm.so)
 
 Solution:
 
@@ -147,7 +147,7 @@ python -c "import tvm; print(tvm.__file__)"
 
 After building the TVM libraries, you need to set environment variables to ensure Python can find the required packages. Run the following commands:
 ```
-export TVM_HOME=/path/to/tvm
+export TVM_HOME={path-to-tvm-base-dir}
 export PYTHONPATH=$TVM_HOME/python:${PYTHONPATH}
 ```
 
